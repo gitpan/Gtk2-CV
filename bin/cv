@@ -40,7 +40,7 @@ sub std_keys {
       $s->set_dir (".");
       $s->get_toplevel->show_all
    } else {
-      $mainwin->show_all;
+      #$mainwin->show_all;
       $schnauzer->handle_key ($key, $state);
    }
 
@@ -61,13 +61,11 @@ $viewer->signal_connect (button3_press_event => sub {
 });
 
 if (@ARGV) {
-   $viewer->load_image ($ARGV[0]);
-
-   if (@ARGV > 1) {
-      $schnauzer->set_paths (\@ARGV);
-   }
+   $schnauzer->set_paths (\@ARGV);
+   $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
 } else {
    $schnauzer->set_dir (".");
+   $mainwin->show_all;
 }
 
 $viewer->show_all;

@@ -27,6 +27,7 @@ sub INIT_INSTANCE {
    $self->double_buffered (0);
 
    $self->signal_connect (realize => sub { $self->do_realize });
+   $self->signal_connect (map_event => sub { $self->auto_position (($self->allocation->values)[2,3]) });
    $self->signal_connect (expose_event => sub { 1 });
    $self->signal_connect (configure_event => sub { $self->do_configure ($_[1]) });
    $self->signal_connect (delete_event => sub { main_quit Gtk2 });
@@ -70,10 +71,8 @@ sub set_image {
    $self->{ih} = $image->get_height;
    $self->{ix} = $self->{iy} = 0;
 
-   if ($self->{iw} > $self->{sw} || $self->{ih} > $self->{sh}) {
-      $self->resize_maxpect;
-   } elsif ($self->{iw} > 0 && $self->{ih} > 0) {
-      $self->resize ($self->{iw}, $self->{ih});
+   if ($self->{iw} && $self->{ih}) {
+      $self->auto_resize if exists $self->{sw};
    } else {
       $self->clear_image;
    }
@@ -109,7 +108,7 @@ sub do_realize {
    $self->{sw} = $self->{window}->get_screen->get_width;
    $self->{sh} = $self->{window}->get_screen->get_height;
 
-   $self->resize ($self->{iw}, $self->{ih}) if $self->{image};
+   $self->auto_resize if $self->{image};
 
    0;
 }
@@ -135,6 +134,27 @@ sub do_button_press {
    }
 }
 
+sub auto_position {
+   my ($self, $w, $h) = @_;
+
+   if (my $window = $self->{window}) {
+      my ($x, $y) = $window->get_position;
+      my $nx = max 0, min $self->{sw} - $w, $x;
+      my $ny = max 0, min $self->{sh} - $h, $y;
+      $window->move ($nx, $ny) if $nx != $x || $ny != $y;
+   }
+}
+
+sub auto_resize {
+   my ($self) = @_;
+
+   if ($self->{iw} > $self->{sw} || $self->{ih} > $self->{sh}) {
+      $self->resize_maxpect;
+   } else {
+      $self->resize ($self->{iw}, $self->{ih});
+   }
+}
+
 sub resize_maxpect {
    my ($self) = @_;
 
@@ -151,12 +171,9 @@ sub resize {
       my $h = max (16, min ($self->{sh}, $h));
 
       delete $self->{dw}; # hack to force redraw because we nuke the bg pixmap
-      $self->{window}->set_back_pixmap (undef, 0);
+      $window->set_back_pixmap (undef, 0);
 
-      my ($x, $y) = $window->get_position;
-      my $nx = max 0, min $self->{sw} - $w, $x;
-      my $ny = max 0, min $self->{sh} - $h, $y;
-      $window->move ($nx, $ny) if $nx != $x || $ny != $y;
+      $self->auto_position ($w, $h);
       $window->resize ($w, $h);
    }
 }
@@ -187,7 +204,7 @@ sub crop {
 }
 
 sub handle_key {
-   my ($self, $key) = @_;
+   my ($self, $key, $state) = @_;
 
    if ($key == $Gtk2::Gdk::Keysyms{less}) {
       $self->resize ($self->{dw} * 0.5, $self->{dh} * 0.5);

@@ -102,6 +102,10 @@ sub coord {
 sub INIT_INSTANCE {
    my ($self) = @_;
 
+   $self->{cols} = 1; # just pretend, simplifies code a lot
+   $self->{page} = 1;
+   $self->{offs} = 0;
+
    $self->push_composite_child;
 
    $self->signal_connect (destroy => sub { %{$_[0]} = () });
@@ -143,6 +147,9 @@ sub INIT_INSTANCE {
 
    $self->{draw}->signal_connect_after (realize => sub {
       $self->{window} = $_[0]->window;
+
+      $self->setadj;
+      $self->make_visible ($self->{cursor}) if $self->cursor_valid;
       0;
    });
 
@@ -350,7 +357,7 @@ sub cursor_move {
       if ($inc < 0) {
          $cursor = $self->{offs} + $self->{page} * $self->{cols} - 1;
       } else {
-         $cursor = 0;
+         $cursor = $self->{offs};
          $cursor++ while -d "$self->{entry}[$cursor][0]/$self->{entry}[$cursor][1]/.";
 
          $self->make_visible ($cursor);
@@ -378,7 +385,8 @@ sub clear_selection {
    my ($self) = @_;
 
    delete $self->{cursor};
-   delete $self->{sel};
+
+   $self->draw_entry ($_) for keys %{delete $self->{sel}};
 }
 
 sub get_selection {
@@ -418,7 +426,8 @@ sub handle_key {
       $self->cursor_move (+1);
 
    } elsif ($key == $Gtk2::Gdk::Keysyms{Return}) {
-      $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
+      $self->cursor_move (0) unless $self->cursor_valid;
+      $self->emit_activate ($self->{cursor});
    } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
       $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
       $self->emit_activate ($self->{cursor});
@@ -441,7 +450,7 @@ sub handle_key {
       }
 
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{d}) {
-      if (my @sel = $self->get_selection) {
+      if (my @sel = values %{$self->get_selection}) {
          unlink "$_->[0]/$_->[1]" for @sel;
          $self->rescan;
       }
@@ -519,8 +528,6 @@ sub selrect {
 sub setadj {
    my ($self) = @_;
 
-   return unless $self->{cols};
-
    $self->{rows} = ceil @{$self->{entry}} / $self->{cols};
 
    $self->{adj}->step_increment (1);
@@ -534,7 +541,7 @@ sub setadj {
    $self->{maxrow} = $self->{rows} - $self->{page};
 
    $self->{adj}->set_value ($self->{maxrow})
-      if $self->{row} > $self->{maxrows};
+      if $self->{row} > $self->{maxrow};
 }
 
 sub expose {
@@ -568,7 +575,7 @@ sub expose {
 
    my $layout = new Gtk2::Pango::Layout $context;
 
-   my $idx = $self->{offs};
+   my $idx = $self->{offs} + 0;
 
 outer:
    for my $y (@y) {
@@ -579,7 +586,7 @@ outer:
             my $text_gc;
 
             # selected?
-            if ($self->{sel}{$idx}) {
+            if (exists $self->{sel}{$idx}) {
                $self->{window}->draw_rectangle ($self->style->black_gc, 1,
                        $x - IX * 0.5, $y, IW + IX, IH + IY);
                $text_gc = $self->style->white_gc;
@@ -615,7 +622,7 @@ outer:
                      $entry->[4][3],
                      $entry->[4][4]);
 
-            # this text-thingy takes a LOT if time
+            # this text-thingy takes a LOT if time, so pre-cache
             my ($w, $h);
             if (defined $entry->[5]) {
                $layout->set_text ($entry->[5]);
@@ -650,8 +657,8 @@ sub rescan {
 sub set_paths {
    my ($self, $paths) = @_;
 
-   $self->clear_selection;
-
+   delete $self->{cursor};
+   delete $self->{sel};
    delete $self->{entry};
 
    my (@d, @f);
