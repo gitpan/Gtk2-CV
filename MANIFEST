@@ -6,10 +6,12 @@ lib/Gtk2/CV.pm
 lib/Gtk2/CV/ImageWindow.pm
 lib/Gtk2/CV/Schnauzer.pm
 lib/Gtk2/CV/PostScript.pm
+lib/Gtk2/CV/PrintDialog.pm
 
 CV.xs
 
 gtkrc
+cv.glade
 images/cv.png
 images/dir.png
 images/file.png

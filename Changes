@@ -1,3 +1,11 @@
+0.15  Wed Nov 12 21:33:32 CET 2003
+	- add nifty print dialog, using glade and GladeXML. GladeXML needs
+          some convinience functions, but is ok to use.
+        - improved schnauzer scrolling and geometry hints.
+        - bugfixes, as usual.
+        - implemented ctrl-u.
+        - implemented maxpect-always mode.
+
 0.14  Mon Nov 10 20:11:15 CET 2003
 	- use subpixbufs for cropping.
 	- don't force redraws anymore, hopefully the result is the same.

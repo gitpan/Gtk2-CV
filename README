@@ -18,6 +18,7 @@ DESCRIPTION
      n       reset to normal size
      m       maximize to screensize
      M       maxime to screensize, respecting image aspect
+     ctrl-m  toggle maxpect-always mode
      u       uncrop
      r       set scaling mode to 'nearest' (fastest)
      s       set scaling mode to 'bilinear' (default)
@@ -45,8 +46,9 @@ DESCRIPTION
      home        move to first file
      end         move to last file
 
-     ctrl-g      generate icons for the selected files
      ctrl-d      delete selected files WITHOUT ASKING AGAIN
+     ctrl-g      generate icons for the selected files
+     ctrl-u      update selected (or all) icons if neccessary
 
 SECURITY CONSIDERATIONS
     CV uses Pixbuf to load images. Pixbuf is not considered safe for this

@@ -1,71 +1,121 @@
 package Gtk2::CV::PostScript;
 
-my $top = <<EOF;
-%!PS-Adobe-3.0
+use Carp;
 
-gsave
-20 dict begin
+my @papersize = map [
+                       $_->[0],
+                       $_->[1],
+                       __PACKAGE__->ps2mm (@_->[2,3]),
+                    ],
+(
+   ["maximize", "Maximize", 0, 0],
+   ["a0", "A0", 2384, 3370],
+   ["a1", "A1", 1684, 2384],
+   ["a2", "A2", 1191, 1684],
+   ["a3", "A3", 842, 1191],
+   ["a4", "A4", 595, 842],
+   ["a5", "A5", 420, 595],
+   ["a6", "A6", 297, 420],
+   ["a7", "A7", 210, 297],
+   ["a8", "A8", 148, 210],
+   ["a9", "A9", 105, 148],
+   ["a10", "A10", 73, 105],
+   ["b0", "B0", 2835, 4008],
+   ["b1", "B1", 2004, 2835],
+   ["b2", "B2", 1417, 2004],
+   ["b3", "B3", 1001, 1417],
+   ["b4", "B4", 709, 1001],
+   ["b5", "B5", 499, 709],
+   ["b6", "B6", 354, 499],
+   ["c0", "C0", 2599, 3677],
+   ["c1", "C1", 1837, 2599],
+   ["c2", "C2", 1298, 1837],
+   ["c3", "C3", 918, 1298],
+   ["c4", "C4", 649, 918],
+   ["c5", "C5", 459, 649],
+   ["c6", "C6", 323, 459],
+   ["jisb0", "B0 (jis)", 2920, 4127],
+   ["jisb1", "B1 (jis)", 2064, 2920],
+   ["jisb2", "B2 (jis)", 1460, 2064],
+   ["jisb3", "B3 (jis)", 1032, 1460],
+   ["jisb4", "B4 (jis)", 729, 1032],
+   ["jisb5", "B5 (jis)", 516, 729],
+   ["jisb6", "B6 (jis)", 363, 516],
+   ["archE", "Arch E", 2592, 3456],
+   ["archD", "Arch D", 1728, 2592],
+   ["archC", "Arch C", 1296, 1728],
+   ["archB", "Arch B", 864, 1296],
+   ["archA", "Arch A", 648, 864],
+   ["11x17", "11x17", 792, 1224],
+   ["ledger", "Ledger", 1224, 792],
+   ["legal", "Legal", 612, 1008],
+   ["letter", "Letter", 612, 792],
+   ["foolscap", "Fools Cap", 612, 936],
+   ["halfletter", "Half Letter", 396, 612],
+);
 
-% slightly modified from gnu ghostscript
-% dog-slow, actually, and not very effective
-/ci
-   {                                   % w h bit [] filter multi ncomp
-     9 dict begin                      % w h bit [] filter multi ncomp
-     7 copy
-     gsave                             % preserve the arguments
-     { 0 /DeviceGray 0 /DeviceRGB /DeviceCMYK }
-     1 index get setcolorspace         % ... glob w h bit [] filter multi ncomp
-     {0 1 0 1 0 1 0 1}
-     1 index 2 mul 0 exch              % ... glob w h bit [] filter multi ncomp {0 1 ...} 0 2*ncomp
-     getinterval /Decode exch def      % ... glob w h bit [] filter multi ncomp
-     exch dup                          % ... glob w h bit [] filter ncomp multi multi
-     /MultipleDataSources exch def     % ... glob w h bit [] filter ncomp multi
-     { array astore} { pop } ifelse    % ... glob w h bit [] [filter]
-     /DataSource exch def              % ... glob w h bit []
-     /ImageMatrix exch def             % ... glob w h bit
-     /BitsPerComponent exch def        % ... glob w h
-     /Height exch def                  % ... glob w
-     /Width exch def                   % ... glob 
-     /ImageType 1 def
-     /Interpolate //true def
-     currentdict end        % ... <<>>
-     image
-     grestore
-     exch { 4 add } { 6 } ifelse
-     { pop } repeat                    % -
-   } bind def
+sub papersizes {
+   @papersize;
+}
 
-newpath clippath pathbbox
-/y2 exch def
-/x2 exch def
-/y exch def
-/x exch def
+sub new {
+   my $class = shift;
 
-/w x2 x sub def
-/h y2 y sub def
+   my $self = bless { @_ }, $class;
 
+   $self->{fh} or croak "required argument 'fh' mising";
+   $self->{pixbuf} or croak "required argument 'pixbuf' missing";
+
+   $self;
+}
+
+sub mm2ps {
+   shift; map $_ * (72 / 25.4), @_;
+}
+
+sub ps2mm {
+   shift; map $_ * (2.54 / 72), @_;
+}
+
+sub print {
+   my ($self) = @_;
+
+   my $fh = $self->{fh};
+   my $pb = $self->{pixbuf};
+
+   my ($iw, $ih) = ($pb->get_width, $pb->get_height);
+
+   $a = $self->{aspect} || $iw / $ih;
+
+   if (my $mb = 1024 * 1024 * 4/5 * $self->{interpolate}) {
+      if ($iw * $ih * 3 < $mb) {
+         $iw = int 0.5 + sqrt $mb / ($a * 3);
+         $ih = int 0.5 + $iw * $a;
+         $pb = $pb->scale_simple ($iw, $ih, "hyper");
+      }
+   }
+
+   $self->print_top;
+
+   my ($w, $h) = $self->mm2ps ($self->{size} ? @{$self->{size}}[-2,-1] : (0, 0));
+
+   $self->print_detectpage;
+
+   if (my ($m) = $self->mm2ps ($self->{margin})) {
+      print $fh <<EOF;
+/x x $m 2 div add def /w w $m sub def
+/y y $m 2 div add def /h h $m sub def
 EOF
+   }
 
-my $bot = <<EOF;
-
-showpage
-end
-
-grestore
-
+   if ($w && $h) {
+      print $fh <<EOF;
+/x x w $w sub 2 div add def /w $w def
+/y y h $h sub 2 div add def /h $h def
 EOF
-
-sub print_pb {
-   my ($fh, $pb, %arg) = @_;
-
-   print $fh $top;
-
-   my ($w, $h) = ($pb->get_width, $pb->get_height);
-
-   $a = $arg{aspect} || $w / $h;
+   }
 
    print $fh <<EOF;
-
 /a $a def
 
 a 1 gt w h div 1 gt eq
@@ -76,7 +126,7 @@ a 1 gt w h div 1 gt eq
      /H h def
    }
    {
-     x2 y translate
+     x w add y translate
 
      /W h def
      /H w def
@@ -100,15 +150,50 @@ exch W sub neg 2 div
 exch H sub neg 2 div translate
 scale
     
-$w $h 8
-[ $w 0 0 -$h 0 $h ]
+$iw $ih 8
+[ $iw 0 0 -$ih 0 $ih ]
 currentfile /ASCII85Decode filter
 false 3 colorimage
    
 EOF
 
    dump_pb $fh, $pb;
-   print $fh $bot;
+
+   $self->print_bot;
+}
+
+sub print_top {
+   print {$_[0]{fh}} <<EOF;
+%!PS-Adobe-3.0
+
+gsave
+20 dict begin
+
+EOF
+}
+
+sub print_detectpage {
+   print {$_[0]{fh}} <<EOF;
+newpath clippath pathbbox
+/y2 exch def
+/x2 exch def
+/y exch def
+/x exch def
+
+/w x2 x sub def
+/h y2 y sub def
+
+EOF
+}
+
+sub print_bot {
+   print {$_[0]{fh}} <<EOF;
+showpage
+end
+
+grestore
+
+EOF
 }
 
 1;

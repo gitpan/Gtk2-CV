@@ -4,7 +4,7 @@ use Gtk2;
 use Gtk2::Gdk::Keysyms;
 
 use Gtk2::CV;
-use Gtk2::CV::PostScript;
+use Gtk2::CV::PrintDialog;
 
 use List::Util qw(min max);
 
@@ -223,7 +223,9 @@ sub auto_resize {
 
    return unless $self->{window};
 
-   if ($self->{iw} > $self->{sw} || $self->{ih} > $self->{sh}) {
+   if ($self->{maxpect}
+       || $self->{iw} > $self->{sw}
+       || $self->{ih} > $self->{sh}) {
       $self->resize_maxpect;
    } else {
       $self->resize ($self->{iw}, $self->{ih});
@@ -278,66 +280,72 @@ sub crop {
 sub handle_key {
    my ($self, $key, $state) = @_;
 
-   my $ctrl = $state * "control-mask";
+   if ($state * "control-mask") {
+      if ($key == $Gtk2::Gdk::Keysyms{p}) {
+         new Gtk2::CV::PrintDialog pixbuf => $self->{subimage}, aspect => $self->{dw} / $self->{dh};
 
-   if ($key == $Gtk2::Gdk::Keysyms{less}) {
-      $self->resize ($self->{dw} * 0.5, $self->{dh} * 0.5);
+      } elsif ($key == $Gtk2::Gdk::Keysyms{m}) {
+         $self->{maxpect} = !$self->{maxpect};
+         $self->auto_resize;
 
-   } elsif ($key == $Gtk2::Gdk::Keysyms{greater}) {
-      $self->resize ($self->{dw} * 2, $self->{dh} * 2);
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{comma}) {
-      $self->resize ($self->{dw} * 0.9, $self->{dh} * 0.9);
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{period}) {
-      $self->resize ($self->{dw} * 1.1, $self->{dh} * 1.1);
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{n}) {
-      $self->auto_resize;
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{m}) {
-      $self->resize ($self->{sw}, $self->{sh});
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{M}) {
-      $self->resize_maxpect;
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{u}) {
-      $self->uncrop;
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{r}) {
-      $self->{interp} = 'nearest';
-      $self->redraw;
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
-      $self->{interp} = 'bilinear';
-      $self->redraw;
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{S}) {
-      $self->{interp} = 'hyper';
-      $self->redraw;
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{t}) {
-      $self->set_subimage (flop (transpose $self->{subimage}));
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{T}) {
-      $self->set_subimage (transpose (flop $self->{subimage}));
-
-   } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{p}) {
-      open my $fh, ">:raw", "/tmp/x"
-         or die "/tmp/x: $!";
-
-      Gtk2::CV::PostScript::print_pb $fh, $self->{subimage}, aspect => $self->{dw} / $self->{dh};
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Escape}
-            && $self->{drag_info}) {
-      # cancel a crop
-      $self->draw_drag_rect;
-
-      delete $self->{drag_info};
+      } else {
+         return 0;
+      }
 
    } else {
+      if ($key == $Gtk2::Gdk::Keysyms{less}) {
+         $self->resize ($self->{dw} * 0.5, $self->{dh} * 0.5);
 
-      return 0;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{greater}) {
+         $self->resize ($self->{dw} * 2, $self->{dh} * 2);
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{comma}) {
+         $self->resize ($self->{dw} * 0.9, $self->{dh} * 0.9);
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{period}) {
+         $self->resize ($self->{dw} * 1.1, $self->{dh} * 1.1);
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{n}) {
+         $self->auto_resize;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{m}) {
+         $self->resize ($self->{sw}, $self->{sh});
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{M}) {
+         $self->resize_maxpect;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{u}) {
+         $self->uncrop;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{r}) {
+         $self->{interp} = 'nearest';
+         $self->redraw;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
+         $self->{interp} = 'bilinear';
+         $self->redraw;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{S}) {
+         $self->{interp} = 'hyper';
+         $self->redraw;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{t}) {
+         $self->set_subimage (flop (transpose $self->{subimage}));
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{T}) {
+         $self->set_subimage (transpose (flop $self->{subimage}));
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Escape}
+               && $self->{drag_info}) {
+         # cancel a crop
+         $self->draw_drag_rect;
+
+         delete $self->{drag_info};
+
+      } else {
+
+         return 0;
+      }
    }
 
    1;

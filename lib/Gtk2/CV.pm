@@ -2,13 +2,13 @@ package Gtk2::CV;
 
 use XSLoader;
 
-$VERSION = 0.14;
+$VERSION = "0.15";
 
 XSLoader::load "Gtk2::CV", $VERSION;
 
 use Gtk2;
 
-sub find_rcfile {
+sub find_rcfile($) {
    my $path;
 
    for (@INC) {
@@ -19,7 +19,7 @@ sub find_rcfile {
    die "FATAL: can't find required file $_[0]\n";
 }
 
-sub require_image {
+sub require_image($) {
    new_from_file Gtk2::Gdk::Pixbuf find_rcfile "images/$_[0]";
 }
 

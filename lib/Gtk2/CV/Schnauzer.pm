@@ -1,3 +1,8 @@
+package Gtk2::CV::Schnauzer::DrawingArea;
+
+use Glib::Object::Subclass Gtk2::DrawingArea,
+   signals => { size_allocate => \&Gtk2::CV::Schnauzer::do_size_allocate_rounded };
+
 package Gtk2::CV::Schnauzer;
 
 use integer;
@@ -35,6 +40,12 @@ sub FY() { 11 } # font-y
 sub SCROLL_Y() { 1  }
 sub PAGE_Y()   { 20 }
 sub SCROLL_TIME() { 150 }
+
+sub do_size_allocate_rounded {
+   $_[1]->width  ($_[1]->width  / (IW + IX) * (IW + IX));
+   $_[1]->height ($_[1]->height / (IH + IY) * (IH + IY));
+   $_[0]->signal_chain_from_overridden ($_[1]);
+}
 
 sub img {
    my $pb = Gtk2::CV::require_image $_[0];
@@ -116,7 +127,7 @@ sub INIT_INSTANCE {
 
    $self->signal_connect (destroy => sub { %{$_[0]} = () });
 
-   $self->pack_start ($self->{draw}   = new Gtk2::DrawingArea, 1, 1, 0);
+   $self->pack_start ($self->{draw}   = new Gtk2::CV::Schnauzer::DrawingArea, 1, 1, 0);
    $self->pack_end   ($self->{scroll} = new Gtk2::VScrollbar , 0, 0, 0);
    
    $self->{adj} = $self->{scroll}->get ("adjustment");
@@ -132,10 +143,8 @@ sub INIT_INSTANCE {
             if ($self->{page} > abs $diff) {
                if ($diff > 0) {
                   $self->{window}->scroll (0, $diff * (IH + IY));
-                  $self->{window}->clear_area (0, $self->{page} * (IH + IY), $self->{width}, $self->{height});
                } else {
                   $self->{window}->scroll (0, $diff * (IH +IY));
-                  $self->invalidate (0, $self->{page} + $diff, $self->{cols} - 1, $self->{page} + $diff);
                }
                $self->{window}->process_all_updates;
             } else {
@@ -147,6 +156,7 @@ sub INIT_INSTANCE {
       0;
    });
 
+   #$self->{draw}->set_redraw_on_allocate (0); # nope
    $self->{draw}->double_buffered (1);
 
    $self->{draw}->signal_connect (size_request => sub {
@@ -187,20 +197,16 @@ sub INIT_INSTANCE {
 
       my $cursor = $x + $y * $self->{cols};
 
-      return unless $cursor < @{$self->{entry}};
-
       delete $self->{cursor};
 
       unless ($_[1]->state * "shift-mask") {
          $self->clear_selection;
          $self->invalidate (0, 0, $self->{cols} - 1, $self->{rows} - 1);
          delete $self->{cursor_current};
-         $self->{cursor} = $cursor;
+         $self->{cursor} = $cursor if $cursor < @{$self->{entry}};
       }
 
-      my $entry = $self->{entry}[$cursor];
-
-      if ($self->{sel}{$cursor}) {
+      if ($cursor < @{$self->{entry}} && $self->{sel}{$cursor}) {
          delete $self->{sel}{$cursor};
          delete $self->{sel_x1};
 
@@ -287,6 +293,18 @@ sub INIT_INSTANCE {
    $self->{draw}->can_focus (1);
 
    $self->push_composite_child;
+}
+
+sub set_geometry_hints {
+   my ($self) = @_;
+
+   my $window = $self->get_toplevel
+      or return;
+
+   my $hints = new Gtk2::Gdk::Geometry;
+   $hints->base_width  (IW + IX); $hints->base_height (IH + IY);
+   $hints->width_inc   (IW + IX); $hints->height_inc  (IH + IY);
+   $window->set_geometry_hints ($self->{draw}, $hints, [qw(base-size resize-inc)]);
 }
 
 sub emit_activate {
@@ -408,92 +426,125 @@ sub get_selection {
    $self->{sel};
 }
 
+sub generate_thumbnail {
+   my ($self, $idx) = @_;
+
+   my $entry = delete $self->{sel}{$idx}
+      || $self->{entry}[$idx]
+      || return;
+
+   $self->make_visible ($idx);
+
+   mkdir "$entry->[0]/$xvpics", 0777;
+   gen_p7 $entry;
+
+   $self->draw_entry ($idx);
+
+   $self->{window}->process_all_updates;
+   Glib::MainContext->iteration (0);
+}
+
+sub update_thumbnail {
+   my ($self, $idx) = @_;
+
+   my $entry = $self->{entry}[$idx];
+
+   if ((stat "$entry->[0]/$entry->[1]")[9]
+       > (stat "$entry->[0]/.xvpics/$entry->[1]")[9]) {
+      $self->generate_thumbnail ($idx)
+   } elsif (delete $self->{sel}{$idx}) {
+      $self->draw_entry ($idx);
+   }
+}
+
 sub handle_key {
    my ($self, $key, $state) = @_;
 
-   my $ctrl = $state >= "control-mask";
+   if ($state >= "control-mask") {
+      if ($key == $Gtk2::Gdk::Keysyms{g}) {
+         $self->generate_thumbnail ($_)
+            for sort { $a <=> $b } keys %{$self->get_selection};
 
-   if ($key == $Gtk2::Gdk::Keysyms{Page_Up}) {
-      my $value = $self->{adj}->value;
-      $self->{adj}->set_value ($value >= $self->{page} ? $value - $self->{page} : 0);
-      $self->clear_cursor;
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Page_Down}) {
-      my $value = $self->{adj}->value + $self->{page};
-      $self->{adj}->set_value ($value <= $self->{maxrow} ? $value : $self->{maxrow});
-      $self->clear_cursor;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{d}) {
+         if (my @sel = values %{$self->get_selection}) {
+            unlink "$_->[0]/$_->[1]" for @sel;
+            $self->rescan;
+         }
 
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Home}) {
-      $self->{adj}->set_value (0);
-      $self->clear_cursor;
-   } elsif ($key == $Gtk2::Gdk::Keysyms{End}) {
-      $self->{adj}->set_value ($self->{maxrow});
-      $self->clear_cursor;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{u}) {
+         if (%{$self->get_selection}) {
+            $self->update_thumbnail ($_)
+               for sort { $a <=> $b } keys %{$self->get_selection};
+         } else {
+            $self->update_thumbnail ($_)
+               for 0 .. $#{$self->{entry}};
+         }
 
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Up}) {
-      $self->cursor_move (-$self->{cols});
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Down}) {
-      $self->cursor_move (+$self->{cols});
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Left}) {
-      $self->cursor_move (-1);
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Right}) {
-      $self->cursor_move (+1);
-
-   } elsif ($key == $Gtk2::Gdk::Keysyms{Return}) {
-      $self->cursor_move (0) unless $self->cursor_valid;
-      $self->emit_activate ($self->{cursor});
-   } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
-      $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
-      $self->emit_activate ($self->{cursor});
-   } elsif ($key == $Gtk2::Gdk::Keysyms{BackSpace}) {
-      $self->cursor_move (-1);
-      $self->emit_activate ($self->{cursor});
-
-   } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{g}) {
-      for my $idx (sort { $a <=> $b } keys %{$self->{sel}}) {
-         my $entry = delete $self->{sel}{$idx};
-
-         $self->make_visible ($idx);
-
-         mkdir "$entry->[0]/$xvpics", 0777;
-         gen_p7 $entry;
-
-         $self->draw_entry ($idx);
-
-         $self->{window}->process_all_updates;
+      } else {
+         return 0;
       }
-
-   } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{d}) {
-      if (my @sel = values %{$self->get_selection}) {
-         unlink "$_->[0]/$_->[1]" for @sel;
-         $self->rescan;
-      }
-
-   } elsif (($key >= ord('0') && $key <= ord('9'))
-            || ($key >= ord('a') && $key <= ord('z'))
-            || ($key >= ord('A') && $key <= ord('Z'))) {
-
-      $key = chr $key;
-
-      my ($idx, $cursor) = (0, 0);
-
-      $self->clear_selection;
-
-      for my $entry (@{$self->{entry}}) {
-         $idx++;
-         $cursor = $idx if $key gt $entry->[1];
-      }
-
-      if ($cursor < @{$self->{entry}}) {
-         delete $self->{cursor_current};
-         $self->{sel}{$cursor} = $self->{entry}[$cursor];
-         $self->{cursor} = $cursor;
-
-         $self->{adj}->set_value (min $self->{maxrow}, $cursor / $self->{cols});
-         $self->invalidate (0, 0, $self->{cols} - 1, $self->{page} - 1);
-      }
-      
    } else {
-      return 0;
+      if ($key == $Gtk2::Gdk::Keysyms{Page_Up}) {
+         my $value = $self->{adj}->value;
+         $self->{adj}->set_value ($value >= $self->{page} ? $value - $self->{page} : 0);
+         $self->clear_cursor;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Page_Down}) {
+         my $value = $self->{adj}->value + $self->{page};
+         $self->{adj}->set_value ($value <= $self->{maxrow} ? $value : $self->{maxrow});
+         $self->clear_cursor;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Home}) {
+         $self->{adj}->set_value (0);
+         $self->clear_cursor;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{End}) {
+         $self->{adj}->set_value ($self->{maxrow});
+         $self->clear_cursor;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Up}) {
+         $self->cursor_move (-$self->{cols});
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Down}) {
+         $self->cursor_move (+$self->{cols});
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Left}) {
+         $self->cursor_move (-1);
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Right}) {
+         $self->cursor_move (+1);
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Return}) {
+         $self->cursor_move (0) unless $self->cursor_valid;
+         $self->emit_activate ($self->{cursor});
+      } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
+         $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
+         $self->emit_activate ($self->{cursor});
+      } elsif ($key == $Gtk2::Gdk::Keysyms{BackSpace}) {
+         $self->cursor_move (-1);
+         $self->emit_activate ($self->{cursor});
+
+      } elsif (($key >= ord('0') && $key <= ord('9'))
+               || ($key >= ord('a') && $key <= ord('z'))
+               || ($key >= ord('A') && $key <= ord('Z'))) {
+
+         $key = chr $key;
+
+         my ($idx, $cursor) = (0, 0);
+
+         $self->clear_selection;
+
+         for my $entry (@{$self->{entry}}) {
+            $idx++;
+            $cursor = $idx if $key gt $entry->[1];
+         }
+
+         if ($cursor < @{$self->{entry}}) {
+            delete $self->{cursor_current};
+            $self->{sel}{$cursor} = $self->{entry}[$cursor];
+            $self->{cursor} = $cursor;
+
+            $self->{adj}->set_value (min $self->{maxrow}, $cursor / $self->{cols});
+            $self->invalidate (0, 0, $self->{cols} - 1, $self->{page} - 1);
+         }
+      } else {
+         return 0;
+      }
    }
 
    1;
@@ -520,11 +571,12 @@ sub selrect {
    my $prev = $self->{sel};
    $self->{sel} = { %{$self->{oldsel}} };
 
+outer:
    for my $y ($y1 .. $y2) {
       my $idx = $y * $self->{cols};
       for my $x ($x1 .. $x2) {
          my $idx = $idx + $x;
-         return if $idx > $#{$self->{entry}};
+         last outer if $idx > $#{$self->{entry}};
 
          $self->{sel}{$idx} = $self->{entry}[$idx];
       }
