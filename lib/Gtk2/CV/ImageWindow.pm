@@ -230,8 +230,6 @@ sub auto_resize {
    } else {
       $self->resize ($self->{iw}, $self->{ih});
    }
-
-   #$self->{window}->process_all_updates;
 }
 
 sub resize_maxpect {
@@ -245,15 +243,18 @@ sub resize_maxpect {
 sub resize {
    my ($self, $w, $h) = @_;
    
-   if (my $window = $self->{window}) {
-      my $w = max (16, min ($self->{sw}, $w));
-      my $h = max (16, min ($self->{sh}, $h));
+   return unless $self->{window};
 
-      $window->set_back_pixmap (undef, 0);
+   my $w = max (16, min ($self->{sw}, $w));
+   my $h = max (16, min ($self->{sh}, $h));
 
-      $self->auto_position ($w, $h);
-      $window->resize ($w, $h);
-   }
+   $self->{dw} = $w;
+   $self->{dh} = $h;
+
+   $self->auto_position ($w, $h);
+   $self->{window}->resize ($w, $h);
+
+   $self->schedule_redraw;
 }
 
 sub uncrop {
@@ -288,6 +289,12 @@ sub handle_key {
          $self->{maxpect} = !$self->{maxpect};
          $self->auto_resize;
 
+      } elsif ($key == $Gtk2::Gdk::Keysyms{e}) {
+         if (fork == 0) {
+            exec $ENV{CV_EDITOR} || "gimp", $self->{path};
+            exit;
+         }
+
       } else {
          return 0;
       }
@@ -319,21 +326,21 @@ sub handle_key {
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{r}) {
          $self->{interp} = 'nearest';
-         $self->redraw;
+         $self->schedule_redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
          $self->{interp} = 'bilinear';
-         $self->redraw;
+         $self->schedule_redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{S}) {
          $self->{interp} = 'hyper';
-         $self->redraw;
+         $self->schedule_redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{t}) {
-         $self->set_subimage (flop (transpose $self->{subimage}));
+         $self->set_subimage (Gtk2::CV::flop (Gtk2::CV::transpose $self->{subimage}));
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{T}) {
-         $self->set_subimage (transpose (flop $self->{subimage}));
+         $self->set_subimage (Gtk2::CV::transpose (Gtk2::CV::flop $self->{subimage}));
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{Escape}
                && $self->{drag_info}) {
@@ -351,14 +358,27 @@ sub handle_key {
    1;
 }
 
+sub schedule_redraw {
+   my ($self) = @_;
+
+   $self->{refresh} ||= add Glib::Idle sub {
+      delete $self->{refresh};
+
+      $self->redraw;
+      0
+   }, undef, -10;
+}
+
 sub redraw {
    my ($self) = @_;
 
-   return unless $self->{window} && $self->{image};
+   return unless $self->{window};
 
    $self->{window}->set_back_pixmap (undef, 0);
 
-   my $pb = $self->{subimage};
+   my $pb = $self->{subimage}
+      or return;
+
    my $pm = new Gtk2::Gdk::Pixmap $self->{window}, $self->{dw}, $self->{dh}, -1;
 
    if ($self->{iw} != $self->{dw} or $self->{ih} != $self->{dh}) {
@@ -388,7 +408,9 @@ sub redraw {
 
    $self->{window}->set_back_pixmap ($pm);
 
-   $self->window->clear_area (0, 0, $self->{w}, $self->{h});
+   $self->window->clear_area (0, 0, $self->{dw}, $self->{dh});
+
+   Gtk2::Gdk->flush;
 }
 
 sub do_configure {
@@ -404,12 +426,6 @@ sub do_configure {
    $self->{w} = $w;
    $self->{h} = $h;
 
-   return if $self->{dw} == $w && $self->{dh} == $h;
-
-   $self->{window}->set_back_pixmap (undef, 0);
-
-   remove Glib::Source $self->{refresh} if exists $self->{refresh};
-
    return unless $self->{subimage};
 
    $w = max (16, $w);
@@ -418,12 +434,9 @@ sub do_configure {
    $self->{dw} = $w;
    $self->{dh} = $h;
 
-   $self->{refresh} = add Glib::Idle sub {
-      delete $self->{refresh};
+   return if $self->{dw} == $w && $self->{dh} == $h;
 
-      $self->redraw;
-      0
-   };
+   $self->schedule_redraw;
 }
 
 1;

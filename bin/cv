@@ -109,7 +109,9 @@ sub std_keys {
 }
 
 if (@ARGV) {
+   $_ = Glib::filename_to_unicode $_ for @ARGV;
    $schnauzer->set_paths (\@ARGV);
+   $schnauzer->show_all;
    $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
 } else {
    $schnauzer->set_dir (File::Spec->curdir);
@@ -154,6 +156,8 @@ You can use the following keys in the image window:
  t       rotate clockwise 90°
  T       rotate counterclockwise°
  ctrl-v  open a new visual schnauzer window for the current dir
+ ctrl-s  rescan visual schnauzer files for updates/deletes etc.
+ ctrl-e  run an editor ($CV_EDITOR or "gimp") on the current image.
 
 The following keys are redirected to the default visual schnauzer window:
 
@@ -177,6 +181,16 @@ You can use the following keys in the schnauzer window:
  ctrl-d      delete selected files WITHOUT ASKING AGAIN
  ctrl-g      generate icons for the selected files
  ctrl-u      update selected (or all) icons if neccessary
+
+=head1 ENVIRONMENT
+
+=over 4
+
+=item CV_PRINT_DESTINATION
+
+The default (perl-style) destination to use in the print dialog.
+
+=back
 
 =head1 SECURITY CONSIDERATIONS
 

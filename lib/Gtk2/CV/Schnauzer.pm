@@ -7,8 +7,6 @@ package Gtk2::CV::Schnauzer;
 
 use integer;
 
-use Errno ();
-
 use Gtk2;
 use Gtk2::Pango;
 use Gtk2::Gdk::Keysyms;
@@ -19,13 +17,16 @@ use Glib::Object::Subclass
    Gtk2::HBox,
    signals => {
       activate => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
+      popup    => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar, Glib::String] },
    };
 
 use List::Util qw(min max);
 
 use File::Spec;
 
-use POSIX qw(ceil);
+use POSIX qw(ceil ENOTDIR);
+
+use strict;
 
 my $xvpics = ".xvpics";
 my $curdir = File::Spec->curdir;
@@ -191,39 +192,42 @@ sub INIT_INSTANCE {
    });
 
    $self->{draw}->signal_connect (button_press_event => sub {
-      $_[0]->grab_focus;
-
       my ($x, $y) = $self->coord ($_[1]); 
-
       my $cursor = $x + $y * $self->{cols};
 
-      delete $self->{cursor};
+      if ($_[1]->type eq "button-press") {
+         if ($_[1]->button == 1) {
+            $_[0]->grab_focus;
 
-      unless ($_[1]->state * "shift-mask") {
-         $self->clear_selection;
-         $self->invalidate (0, 0, $self->{cols} - 1, $self->{rows} - 1);
-         delete $self->{cursor_current};
-         $self->{cursor} = $cursor if $cursor < @{$self->{entry}};
+            delete $self->{cursor};
+
+            unless ($_[1]->state * "shift-mask") {
+               $self->clear_selection;
+               $self->invalidate (0, 0, $self->{cols} - 1, $self->{rows} - 1);
+               delete $self->{cursor_current};
+               $self->{cursor} = $cursor if $cursor < @{$self->{entry}};
+            }
+
+            if ($cursor < @{$self->{entry}} && $self->{sel}{$cursor}) {
+               delete $self->{sel}{$cursor};
+               delete $self->{sel_x1};
+
+               $self->invalidate (
+                  (($cursor - $self->{offs}) % $self->{cols},
+                   ($cursor - $self->{offs}) / $self->{cols}) x 2
+               );
+            } else {
+               ($self->{sel_x1}, $self->{sel_y1}) =
+               ($self->{sel_x2}, $self->{sel_y2}) = ($x, $y);
+               $self->{oldsel} = $self->{sel};
+               $self->selrect;
+            }
+         } elsif ($_[1]->button == 3) {
+            $self->emit_popup ($_[1], $cursor);
+         }
+      } elsif ($_[1]->type eq "2button-press") { 
+         $self->emit_activate ($cursor);
       }
-
-      if ($cursor < @{$self->{entry}} && $self->{sel}{$cursor}) {
-         delete $self->{sel}{$cursor};
-         delete $self->{sel_x1};
-
-         $self->invalidate (
-            (($cursor - $self->{offs}) % $self->{cols},
-             ($cursor - $self->{offs}) / $self->{cols}) x 2
-         );
-      } else {
-         ($self->{sel_x1}, $self->{sel_y1}) =
-         ($self->{sel_x2}, $self->{sel_y2}) = ($x, $y);
-         $self->{oldsel} = $self->{sel};
-         $self->selrect;
-      }
-
-      $self->emit_activate ($cursor)
-         if $_[1]->type eq "2button-press";
-
       1;
    });
 
@@ -305,6 +309,33 @@ sub set_geometry_hints {
    $hints->base_width  (IW + IX); $hints->base_height (IH + IY);
    $hints->width_inc   (IW + IX); $hints->height_inc  (IH + IY);
    $window->set_geometry_hints ($self->{draw}, $hints, [qw(base-size resize-inc)]);
+}
+
+sub emit_popup {
+   my ($self, $event, $cursor) = @_;
+
+   my $entry = $self->{entry}[$cursor];
+   my $path = "$entry->[0]/$entry->[1]";
+
+   $self->{cursor_current} = 1;
+
+#                print "right clicked!\n";
+#                # here i create a menu by hand....
+#                my $menu = Gtk2::Menu->new;
+#                foreach (qw/ one two red blue /) {
+#                        my $item = Gtk2::MenuItem->new ("$_ fish");
+#                        $item->show;
+#                        $menu->append ($item);
+#                        $item->signal_connect (activate => sub {
+#                                        print "@_ (fish)\n";
+#                                }, $_);
+#                }
+#                 
+#                # and pop it up.
+#                $menu->popup (undef, undef, undef, undef,
+#                              $event->button, $event->time);
+
+   $self->signal_emit (popup => $event, $path);
 }
 
 sub emit_activate {
@@ -460,14 +491,20 @@ sub update_thumbnail {
 sub handle_key {
    my ($self, $key, $state) = @_;
 
-   if ($state >= "control-mask") {
+   if ($state * "control-mask") {
       if ($key == $Gtk2::Gdk::Keysyms{g}) {
          $self->generate_thumbnail ($_)
             for sort { $a <=> $b } keys %{$self->get_selection};
 
+      } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
+         $self->rescan;
+
       } elsif ($key == $Gtk2::Gdk::Keysyms{d}) {
          if (my @sel = values %{$self->get_selection}) {
-            unlink "$_->[0]/$_->[1]" for @sel;
+            for (@sel) {
+               unlink "$_->[0]/$_->[1]";
+               unlink "$_->[0]/.xvpics/$_->[1]";
+            }
             $self->rescan;
          }
 
@@ -520,8 +557,7 @@ sub handle_key {
          $self->emit_activate ($self->{cursor});
 
       } elsif (($key >= ord('0') && $key <= ord('9'))
-               || ($key >= ord('a') && $key <= ord('z'))
-               || ($key >= ord('A') && $key <= ord('Z'))) {
+               || ($key >= ord('a') && $key <= ord('z'))) {
 
          $key = chr $key;
 
@@ -531,7 +567,7 @@ sub handle_key {
 
          for my $entry (@{$self->{entry}}) {
             $idx++;
-            $cursor = $idx if $key gt $entry->[1];
+            $cursor = $idx if $key gt lcfirst $entry->[1];
          }
 
          if ($cursor < @{$self->{entry}}) {
@@ -562,22 +598,36 @@ sub invalidate {
 sub selrect {
    my ($self) = @_;
 
+   return unless $self->{oldsel};
+
    my ($x1, $y1) = ($self->{sel_x1}, $self->{sel_y1});
    my ($x2, $y2) = ($self->{sel_x2}, $self->{sel_y2});
-
-   ($x1, $x2) = ($x2, $x1) if $x2 < $x1;
-   ($y1, $y2) = ($y2, $y1) if $y2 < $y1;
 
    my $prev = $self->{sel};
    $self->{sel} = { %{$self->{oldsel}} };
 
-outer:
-   for my $y ($y1 .. $y2) {
-      my $idx = $y * $self->{cols};
-      for my $x ($x1 .. $x2) {
-         my $idx = $idx + $x;
-         last outer if $idx > $#{$self->{entry}};
+   if (0) {
+      ($x1, $x2) = ($x2, $x1) if $x1 > $x2;
+      ($y1, $y2) = ($y2, $y1) if $y1 > $y2;
 
+      outer:
+      for my $y ($y1 .. $y2) {
+         my $idx = $y * $self->{cols};
+         for my $x ($x1 .. $x2) {
+            my $idx = $idx + $x;
+            last outer if $idx > $#{$self->{entry}};
+
+            $self->{sel}{$idx} = $self->{entry}[$idx];
+         }
+      }
+   } else {
+      my $a = $x1 + $y1 * $self->{cols};
+      my $b = $x2 + $y2 * $self->{cols};
+
+      ($a, $b) = ($b, $a) if $a > $b;
+
+      for my $idx ($a .. $b) {
+         last if $idx > $#{$self->{entry}};
          $self->{sel}{$idx} = $self->{entry}[$idx];
       }
    }
@@ -599,11 +649,11 @@ sub setadj {
    $self->{adj}->page_size      ($self->{page});
    $self->{adj}->page_increment ($self->{page});
    $self->{adj}->lower          (0);
-   $self->{adj}->upper          ($self->{rows});
+   $self->{adj}->upper          ($self->{rows} + 1);
 
    $self->{adj}->changed;
 
-   $self->{maxrow} = $self->{rows} - $self->{page};
+   $self->{maxrow} = $self->{rows} - $self->{page} + 1;
 
    $self->{adj}->set_value ($self->{maxrow})
       if $self->{row} > $self->{maxrow};
@@ -698,6 +748,8 @@ outer:
 
                my $d = (length $name) * (1 - $maxwidth / $w);
 
+               $name =~ s/\..{3,4}$//;
+
                substr $name, 0.5 * ((length $name) - $d), $d, "\x{2026}";
 
                while () {
@@ -738,12 +790,22 @@ sub set_paths {
    my (@d, @f);
    my ($dir, $file);
 
-   for my $path (sort @$paths) {
-      if ($path =~ /^(.*)\/([^\/]*)$/s) {
-         ($dir, $file) = ($1, $2);
-      } else {
-         ($dir, $file) = ($curdir, $path);
-      }
+   $paths = [
+               sort { $a->[2] cmp $b->[2] }
+                    map {
+                           if ($_ =~ /^(.*)\/([^\/]*)$/s) {
+                              ($dir, $file) = ($1, $2);
+                           } else {
+                              ($dir, $file) = ($curdir, $_);
+                           }
+                           (my $key = lc $file) =~ s/(\d+{1,5})/sprintf "%05d", $1/ge;
+                           [$dir, $file, $key]
+                        }
+                        @$paths
+            ];
+
+   for (@$paths) {
+      ($dir, $file, undef) = @$_;
 
       my $entry = [$dir, $file];
 
@@ -756,9 +818,9 @@ sub set_paths {
          push @f, $entry;
       } else {
          # this is faster than a normal stat
-         if (stat "$path/.") {
+         if (stat "$dir/$file/.") {
             push @d, $entry;
-         } elsif ($! == Errno::ENOTDIR) {
+         } elsif ($! == ENOTDIR) {
             push @f, $entry;
          } else {
             # does not exist
@@ -781,7 +843,7 @@ sub set_dir {
    opendir my $fh, $dir
       or die "$dir: $!";
 
-   $self->set_paths ([map "$dir/$_", readdir $fh]);
+   $self->set_paths ([map "$dir/" . Glib::filename_to_unicode $_, readdir $fh]);
 }
 
 sub add_idle {

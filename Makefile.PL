@@ -24,8 +24,8 @@ WriteMakefile(
 	            SUFFIX	=> '.gz',
 	           },
     PREREQ_PM	=> {
-    		    Glib		=> 1.01,
-    		    Gtk2		=> 1.01,
+    		    Glib		=> 1.011,
+    		    Gtk2		=> 1.011,
                     Gtk2::PodViewer	=> 0.03,
                     Gtk2::GladeXML      => 0.93,
 		   },

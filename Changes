@@ -1,3 +1,20 @@
+
+0.3  Sun Aug  1 21:59:49 CEST 2004
+	- cv * now correctly loads && selects the first image again.
+        - changed selection behaviour to select ranges not rectangles
+          (could be configurable at runtime).
+        - many small bugfixes.
+        - better display behaviour when viewing many images quickly.
+        - changed sort order to sth... strange (case insensitive,
+          numbers < 5 digits sorted in numerical order).
+
+0.2  Thu Nov 20 07:49:55 CET 2003
+	- add DSC comments (except for %%page).
+        - implemented binary encoding for postscript printing.
+        - ctrl-s == rescan.
+        - less-latency resizes.
+        - after implementing filename_to_unicode maybe it is time to use it...
+
 0.15  Wed Nov 12 21:33:32 CET 2003
 	- add nifty print dialog, using glade and GladeXML. GladeXML needs
           some convinience functions, but is ok to use.

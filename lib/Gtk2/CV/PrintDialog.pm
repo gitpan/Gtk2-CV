@@ -42,18 +42,13 @@ sub new {
                               : 0,
             dest_type   => (qw(perl file pipe))[$d->get_widget ("dest_type")->get_history],
             destination => $d->get_widget ("destination")->get ("text"),
+            binary      => $d->get_widget ("encoding_binary")->get ("active"),
          );
       }
       $_[0]->destroy;
    });
 
    $self;
-}
-
-sub on_dest_activate {
-   my $self = shift->get_widget_tree;
-   #warn $_[0]->get_name;
-   #$_[0]->get_widget_tree->get_widget ("destination")->set (
 }
 
 sub print {
