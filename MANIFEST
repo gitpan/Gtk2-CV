@@ -1,0 +1,16 @@
+Makefile.PL
+MANIFEST
+
+lib/Gtk2/CV.pm
+lib/Gtk2/CV/ImageWindow.pm
+lib/Gtk2/CV/Schnauzer.pm
+
+CV.xs
+
+images/cv.png
+images/dir.png
+images/file.png
+
+bin/cv
+
+META.yml
