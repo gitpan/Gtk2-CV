@@ -1,6 +1,7 @@
-require 5.008;
+#require 5.008;
 
-use Config;
+#use Config;
+use strict;
 
 use ExtUtils::MakeMaker;
 use ExtUtils::Depends;
@@ -26,8 +27,9 @@ WriteMakefile(
 	            SUFFIX	=> '.gz',
 	           },
     PREREQ_PM	=> {
-    		    Gtk2		=> 1.01,
     		    Glib		=> 1.01,
+    		    Gtk2		=> 1.01,
+                    Gtk2::PodViewer::	=> 0.03,
 		   },
     DIR		=> [],
     NAME	=> 'Gtk2::CV',
@@ -36,6 +38,7 @@ WriteMakefile(
     $pkg->get_makefile_vars,
     PM		=> {
        'lib/Gtk2/CV/ImageWindow.pm'	=> '$(INST_LIBDIR)/CV/ImageWindow.pm',
+       'lib/Gtk2/CV/PostScript.pm'	=> '$(INST_LIBDIR)/CV/PostScript.pm',
        'lib/Gtk2/CV/Schnauzer.pm'	=> '$(INST_LIBDIR)/CV/Schnauzer.pm',
        'lib/Gtk2/CV.pm'			=> '$(INST_LIBDIR)/CV.pm',
 

@@ -4,10 +4,14 @@ use Gtk2;
 use Gtk2::Gdk::Keysyms;
 
 use Gtk2::CV;
+use Gtk2::CV::PostScript;
 
 use List::Util qw(min max);
 
 my $title_img = Gtk2::CV::require_image "cv.png";
+
+# no, muppet, it's not for speed, it's for readability only :)
+my $gtk20 = (Gtk2->get_version_info)[1] < 2;
 
 use Glib::Object::Subclass
    Gtk2::Window,
@@ -15,8 +19,12 @@ use Glib::Object::Subclass
       Glib::ParamSpec->string ("path", "Pathname", "The image pathname", "", [qw(writable readable)]),
    ],
    signals => {
-      image_changed       => { flags => [qw/run-first/], return_type => undef, param_types => [] },
-      button3_press_event => { flags => [qw/run-first/], return_type => undef, param_types => [] },
+      image_changed        => { flags => [qw/run-first/], return_type => undef, param_types => [] },
+      button3_press_event  => { flags => [qw/run-first/], return_type => undef, param_types => [] },
+
+      button_press_event   => sub { $_[0]->do_button_press (1, $_[1]) },
+      button_release_event => sub { $_[0]->do_button_press (0, $_[1]) },
+      motion_notify_event  => \&motion_notify_event,
    };
 
 sub INIT_INSTANCE {
@@ -31,11 +39,10 @@ sub INIT_INSTANCE {
    $self->signal_connect (expose_event => sub { 1 });
    $self->signal_connect (configure_event => sub { $self->do_configure ($_[1]) });
    $self->signal_connect (delete_event => sub { main_quit Gtk2 });
-   $self->signal_connect (key_press_event => sub { $self->handle_key ($_[1]->keyval) });
-   $self->signal_connect (button_press_event => sub { $self->do_button_press (1, $_[1]) });
-   $self->signal_connect (button_release_event => sub { $self->do_button_press (0, $_[1]) });
+   $self->signal_connect (key_press_event => sub { $self->handle_key ($_[1]->keyval, $_[1]->state) });
 
-   $self->add_events ([qw(key_press_mask focus-change-mask button_press_mask button_release_mask)]);
+   $self->add_events ([qw(key_press_mask focus-change-mask button_press_mask
+                          button_release_mask pointer-motion-hint-mask pointer-motion-mask)]);
    $self->can_focus (1);
    $self->set_size_request (0, 0);
 
@@ -62,20 +69,30 @@ sub do_image_changed {
    my ($self) = @_;
 }
 
+sub set_subimage {
+   my ($self, $image) = @_;
+
+   delete $self->{dw};
+
+   $self->{subimage} = $image;
+
+   $self->{iw} = $image->get_width;
+   $self->{ih} = $image->get_height;
+
+   if ($self->{iw} && $self->{ih}) {
+      $self->auto_resize;
+   } else {
+      $self->clear_image;
+   }
+}
+
+
 sub set_image {
    my ($self, $image) = @_;
 
    $self->{image} = $image;
 
-   $self->{iw} = $image->get_width;
-   $self->{ih} = $image->get_height;
-   $self->{ix} = $self->{iy} = 0;
-
-   if ($self->{iw} && $self->{ih}) {
-      $self->auto_resize if exists $self->{sw};
-   } else {
-      $self->clear_image;
-   }
+   $self->set_subimage ($image);
 }
 
 sub clear_image {
@@ -105,12 +122,36 @@ sub do_realize {
    my ($self, $mapped) = @_;
 
    $self->{window} = $self->window;
-   $self->{sw} = $self->{window}->get_screen->get_width;
-   $self->{sh} = $self->{window}->get_screen->get_height;
+
+   if ($gtk20) {
+      $self->{sw} = Gtk2::Gdk->screen_width;
+      $self->{sh} = Gtk2::Gdk->screen_height;
+   } else {
+      $self->{sw} = $self->{window}->get_screen->get_width;
+      $self->{sh} = $self->{window}->get_screen->get_height;
+   }
 
    $self->auto_resize if $self->{image};
 
+   $self->{drag_gc} = Gtk2::Gdk::GC->new ($self->window);
+   $self->{drag_gc}->set_function ('xor');
+   $self->{drag_gc}->set_foreground ($self->style->white);
+
    0;
+}
+
+sub draw_drag_rect {
+   my $self = shift;
+
+   my $d = $self->{drag_info};
+
+   my $x = min @$d[0,2];
+   my $y = min @$d[1,3];
+
+   my $w = abs $d->[2] - $d->[0] - 1;
+   my $h = abs $d->[3] - $d->[1] - 1;
+
+   $self->window->draw_rectangle ($self->{drag_gc}, 0, $x, $y, $w, $h);
 }
 
 sub do_button_press {
@@ -119,19 +160,51 @@ sub do_button_press {
    if ($event->button == 3) {
       $self->signal_emit ("button3_press_event") if $press;
    } else {
-      my $x = $event->x / $self->{sx} + $self->{ix};
-      my $y = $event->y / $self->{sy} + $self->{iy};
-
       if ($press) {
-         $self->{ix_} = $x;
-         $self->{iy_} = $y;
+         $self->{drag_info} = [ ($event->x, $event->y) x 2 ];
+         $self->draw_drag_rect;
       } else {
-         ($x, $self->{ix_}) = ($self->{ix_}, $x) if $self->{ix_} > $x;
-         ($y, $self->{iy_}) = ($self->{iy_}, $y) if $self->{iy_} > $y;
+         my $d = delete $self->{drag_info};
 
-         $self->crop (delete $self->{ix_}, delete $self->{iy_}, $x, $y);
+         return 0 unless $d;
+
+         $self->crop (
+            (min @$d[0,2]) / $self->{sx},
+            (min @$d[1,3]) / $self->{sy},
+            (max @$d[0,2]) / $self->{sx},
+            (max @$d[1,3]) / $self->{sy},
+         );
       }
    }
+
+   1;
+}
+
+sub motion_notify_event {
+   my ($self, $event) = @_;
+
+   return unless $self->{drag_info};
+
+   my ($x, $y, $state);
+
+   if ($event->is_hint) {
+      (undef, $x, $y, $state) = $event->window->get_pointer;
+   } else {
+      $x = $event->x;
+      $y = $event->y;
+      $state = $event->state;
+   }
+   $x = max 0, min $self->{dw}, $event->x;
+   $y = max 0, min $self->{dh}, $event->y;
+
+   # erase last
+   $self->draw_drag_rect;
+
+   # draw next
+   @{$self->{drag_info}}[2,3] = ($x, $y);
+   $self->draw_drag_rect;
+
+   1;
 }
 
 sub auto_position {
@@ -148,11 +221,15 @@ sub auto_position {
 sub auto_resize {
    my ($self) = @_;
 
+   return unless $self->{window};
+
    if ($self->{iw} > $self->{sw} || $self->{ih} > $self->{sh}) {
       $self->resize_maxpect;
    } else {
       $self->resize ($self->{iw}, $self->{ih});
    }
+
+   #$self->{window}->process_all_updates;
 }
 
 sub resize_maxpect {
@@ -170,7 +247,6 @@ sub resize {
       my $w = max (16, min ($self->{sw}, $w));
       my $h = max (16, min ($self->{sh}, $h));
 
-      delete $self->{dw}; # hack to force redraw because we nuke the bg pixmap
       $window->set_back_pixmap (undef, 0);
 
       $self->auto_position ($w, $h);
@@ -181,23 +257,19 @@ sub resize {
 sub uncrop {
    my ($self) = @_;
 
-   $self->{ix} = $self->{iy} = 0;
-   $self->{iw} = $self->{image}->get_width;
-   $self->{ih} = $self->{image}->get_height;
-
-   $self->resize ($self->{iw}, $self->{ih});
+   $self->set_subimage ($self->{image});
 }
 
 sub crop {
    my ($self, $x1, $y1, $x2, $y2) = @_;
 
-   $self->{ix} = $x1;
-   $self->{iy} = $y1;
-   $self->{iw} = $x2 - $x1;
-   $self->{ih} = $y2 - $y1;
+   $x2 -= $x1;
+   $y2 -= $y1;
 
-   if ($self->{iw} && $self->{ih}) {
-      $self->resize ($self->{iw}, $self->{ih});
+   if ($x2 && $y2) {
+      $self->set_subimage (
+         $self->{subimage}->new_subpixbuf ($x1, $y1, $x2, $y2)
+      );
    } else {
       $self->uncrop;
    }
@@ -205,6 +277,8 @@ sub crop {
 
 sub handle_key {
    my ($self, $key, $state) = @_;
+
+   my $ctrl = $state * "control-mask";
 
    if ($key == $Gtk2::Gdk::Keysyms{less}) {
       $self->resize ($self->{dw} * 0.5, $self->{dh} * 0.5);
@@ -219,7 +293,7 @@ sub handle_key {
       $self->resize ($self->{dw} * 1.1, $self->{dh} * 1.1);
 
    } elsif ($key == $Gtk2::Gdk::Keysyms{n}) {
-      $self->resize ($self->{iw}, $self->{ih});
+      $self->auto_resize;
 
    } elsif ($key == $Gtk2::Gdk::Keysyms{m}) {
       $self->resize ($self->{sw}, $self->{sh});
@@ -243,10 +317,23 @@ sub handle_key {
       $self->redraw;
 
    } elsif ($key == $Gtk2::Gdk::Keysyms{t}) {
-      $self->set_image (flop (transpose $self->{image}));
+      $self->set_subimage (flop (transpose $self->{subimage}));
 
    } elsif ($key == $Gtk2::Gdk::Keysyms{T}) {
-      $self->set_image (transpose (flop $self->{image}));
+      $self->set_subimage (transpose (flop $self->{subimage}));
+
+   } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{p}) {
+      open my $fh, ">:raw", "/tmp/x"
+         or die "/tmp/x: $!";
+
+      Gtk2::CV::PostScript::print_pb $fh, $self->{subimage}, aspect => $self->{dw} / $self->{dh};
+
+   } elsif ($key == $Gtk2::Gdk::Keysyms{Escape}
+            && $self->{drag_info}) {
+      # cancel a crop
+      $self->draw_drag_rect;
+
+      delete $self->{drag_info};
 
    } else {
 
@@ -263,16 +350,15 @@ sub redraw {
 
    $self->{window}->set_back_pixmap (undef, 0);
 
-   my $pb = $self->{image};
+   my $pb = $self->{subimage};
    my $pm = new Gtk2::Gdk::Pixmap $self->{window}, $self->{dw}, $self->{dh}, -1;
 
-   if ($self->{iw} != $self->{dw} or $self->{ih} != $self->{dh}
-       or $self->{ix} or $self->{iy}) {
+   if ($self->{iw} != $self->{dw} or $self->{ih} != $self->{dh}) {
       $self->{sx} = $self->{dw} / $self->{iw};
       $self->{sy} = $self->{dh} / $self->{ih};
       $pb = new Gtk2::Gdk::Pixbuf 'rgb', $pb->get_has_alpha, 8, $self->{dw}, $self->{dh};
-      $self->{image}->scale ($pb, 0, 0, $self->{dw}, $self->{dh},
-                  -$self->{ix} * $self->{sx}, -$self->{iy} * $self->{sy},
+      $self->{subimage}->scale ($pb, 0, 0, $self->{dw}, $self->{dh},
+                  0, 0,
                   $self->{sx}, $self->{sy},
                   $self->{interp});
    } else {
@@ -280,10 +366,17 @@ sub redraw {
       $self->{sy} = 1;
    }
 
-   $pm->draw_pixbuf ($self->style->white_gc,
-         $pb,
-         0, 0, 0, 0, $self->{dw}, $self->{dh},
-         "normal", 0, 0);
+   if ($gtk20) {
+      $pb->render_to_drawable ($pm,
+             $self->style->white_gc,
+             0, 0, 0, 0, $self->{dw}, $self->{dh},
+            'normal', 0, 0);
+   } else {
+      $pm->draw_pixbuf ($self->style->white_gc,
+            $pb,
+            0, 0, 0, 0, $self->{dw}, $self->{dh},
+            "normal", 0, 0);
+   }
 
    $self->{window}->set_back_pixmap ($pm);
 
@@ -295,8 +388,7 @@ sub do_configure {
 
    my $window = $self->window;
 
-   my $sw = $self->{sw} = $window->get_screen->get_width;
-   my $sh = $self->{sh} = $window->get_screen->get_height;
+   my ($sw, $sh) = ($self->{sw}, $self->{sh});
 
    my ($x, $y) = ($event->x, $event->y);
    my ($w, $h) = ($event->width, $event->height);
@@ -310,7 +402,7 @@ sub do_configure {
 
    remove Glib::Source $self->{refresh} if exists $self->{refresh};
 
-   return unless $self->{image};
+   return unless $self->{subimage};
 
    $w = max (16, $w);
    $h = max (16, $h);

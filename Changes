@@ -1,0 +1,14 @@
+0.14  Mon Nov 10 20:11:15 CET 2003
+	- use subpixbufs for cropping.
+	- don't force redraws anymore, hopefully the result is the same.
+        - primitive printing with automaxpect (always to /tmp/x, watch out!).
+        - off-by-one error in flip code fixed.
+        - replaced nearest interpolation to tiles for thumbnail generation.
+        - much improved thumbnail dithering.
+        - applied drag_rect patch by muppet, together with some infrastructure
+          improvements.
+        - faster and less accurate text "autoscaling".
+
+0.13  Sat Nov  8 14:13:24 CET 2003
+	- Applied patch by muppet to backport it to gtk2.0,
+          plus portabiity fixes.

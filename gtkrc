@@ -1,0 +1,9 @@
+# I am lame, but this will grow
+
+style "xv" {
+   bg[NORMAL] = "#b2d0dc"
+   bg[ACTIVE] = "#8b99b5"
+   base[NORMAL] = "#b2d0dc"
+}
+
+class "GtkWidget" style :lowest "xv"

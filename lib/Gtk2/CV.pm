@@ -2,7 +2,7 @@ package Gtk2::CV;
 
 use XSLoader;
 
-$VERSION = 0.12;
+$VERSION = 0.14;
 
 XSLoader::load "Gtk2::CV", $VERSION;
 

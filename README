@@ -48,7 +48,19 @@ DESCRIPTION
      ctrl-g      generate icons for the selected files
      ctrl-d      delete selected files WITHOUT ASKING AGAIN
 
+SECURITY CONSIDERATIONS
+    CV uses Pixbuf to load images. Pixbuf is not considered safe for this
+    purpose, though (from the gtk-2.2 release notes):
+
+    "While efforts have been made to make gdk-pixbuf robust against invalid
+    images, using gdk-pixbuf to load untrusted data is not recommended, due
+    to the likelyhood that there are additional problems where an invalid
+    image could cause gdk-pixbuf to crash or worse."
+
 BUGS/TODO
+     Pixbuf doesn't honor G_BROKEN_FILENAMES, so accessing files with names
+     incompatible with utf-8 fails.
+
      rotate on disk
      print
      lots of ui issues

@@ -18,9 +18,15 @@ use Glib::Object::Subclass
 
 use List::Util qw(min max);
 
+use File::Spec;
+
 use POSIX qw(ceil);
 
-sub IW() { 80 }
+my $xvpics = ".xvpics";
+my $curdir = File::Spec->curdir;
+my $updir = File::Spec->updir;
+
+sub IW() { 80 } # must be the same as in CV.xs(!)
 sub IH() { 60 }
 sub IX() { 30 }
 sub IY() { 16 }
@@ -68,11 +74,11 @@ sub gen_p7 {
          $h = IH;
       }
 
-      my $p7 = $pb->scale_simple ($w, $h, 'nearest');
+      my $p7 = $pb->scale_simple ($w, $h, 'tiles');
 
       my $data = pb_to_p7 $p7;
 
-      if (open my $p7, ">:raw", "$e->[0]/.xvpics/$e->[1]") {
+      if (open my $p7, ">:raw", "$e->[0]/$xvpics/$e->[1]") {
          print $p7 "P7 332\n$w $h 255\n" . $data;
          close $p7;
 
@@ -122,19 +128,23 @@ sub INIT_INSTANCE {
          $self->{row} = $row;
          $self->{offs} = $row * $self->{cols};
 
-         if ($self->{page} > abs $diff) {
-            if ($diff > 0) {
-               $self->{window}->scroll (0, $diff * (IH + IY));
-               $self->{window}->clear_area (0, $self->{page} * (IH + IY), $self->{width}, $self->{height});
+         if ($self->{window}) {
+            if ($self->{page} > abs $diff) {
+               if ($diff > 0) {
+                  $self->{window}->scroll (0, $diff * (IH + IY));
+                  $self->{window}->clear_area (0, $self->{page} * (IH + IY), $self->{width}, $self->{height});
+               } else {
+                  $self->{window}->scroll (0, $diff * (IH +IY));
+                  $self->invalidate (0, $self->{page} + $diff, $self->{cols} - 1, $self->{page} + $diff);
+               }
+               $self->{window}->process_all_updates;
             } else {
-               $self->{window}->scroll (0, $diff * (IH +IY));
-               $self->invalidate (0, $self->{page} + $diff, $self->{cols} - 1, $self->{page} + $diff);
+               $self->invalidate (0, 0, $self->{cols} - 1, $self->{page} - 1);
             }
-            $self->{window}->process_all_updates;
-         } else {
-            $self->invalidate (0, 0, $self->{cols} - 1, $self->{page} - 1);
          }
       }
+
+      0;
    });
 
    $self->{draw}->double_buffered (1);
@@ -142,6 +152,7 @@ sub INIT_INSTANCE {
    $self->{draw}->signal_connect (size_request => sub {
       $_[1]->width  ((IW + IX) * 4);
       $_[1]->height ((IH + IY) * 3);
+
       1;
    });
 
@@ -150,6 +161,7 @@ sub INIT_INSTANCE {
 
       $self->setadj;
       $self->make_visible ($self->{cursor}) if $self->cursor_valid;
+
       0;
    });
 
@@ -179,7 +191,7 @@ sub INIT_INSTANCE {
 
       delete $self->{cursor};
 
-      unless (grep $_ eq "shift-mask", @{$_[1]->state}) {
+      unless ($_[1]->state * "shift-mask") {
          $self->clear_selection;
          $self->invalidate (0, 0, $self->{cols} - 1, $self->{rows} - 1);
          delete $self->{cursor_current};
@@ -358,7 +370,8 @@ sub cursor_move {
          $cursor = $self->{offs} + $self->{page} * $self->{cols} - 1;
       } else {
          $cursor = $self->{offs};
-         $cursor++ while -d "$self->{entry}[$cursor][0]/$self->{entry}[$cursor][1]/.";
+         $cursor++ while $cursor < $#{$self->{entry}}
+                         && -d "$self->{entry}[$cursor][0]/$self->{entry}[$cursor][1]/.";
 
          $self->make_visible ($cursor);
       }
@@ -386,7 +399,7 @@ sub clear_selection {
 
    delete $self->{cursor};
 
-   $self->draw_entry ($_) for keys %{delete $self->{sel}};
+   $self->draw_entry ($_) for keys %{delete $self->{sel} || {}};
 }
 
 sub get_selection {
@@ -398,7 +411,7 @@ sub get_selection {
 sub handle_key {
    my ($self, $key, $state) = @_;
 
-   my $ctrl = grep $_ eq "control-mask", @$state;
+   my $ctrl = $state >= "control-mask";
 
    if ($key == $Gtk2::Gdk::Keysyms{Page_Up}) {
       my $value = $self->{adj}->value;
@@ -441,7 +454,7 @@ sub handle_key {
 
          $self->make_visible ($idx);
 
-         mkdir "$entry->[0]/.xvpics", 0777;
+         mkdir "$entry->[0]/$xvpics", 0777;
          gen_p7 $entry;
 
          $self->draw_entry ($idx);
@@ -574,7 +587,7 @@ sub expose {
    $font->set_size (FY * 1/96 * 72.27 * Gtk2::Pango->scale);
 
    my $layout = new Gtk2::Pango::Layout $context;
-
+   my $maxwidth = IW + IX - IY * 0.25;
    my $idx = $self->{offs} + 0;
 
 outer:
@@ -624,19 +637,28 @@ outer:
 
             # this text-thingy takes a LOT if time, so pre-cache
             my ($w, $h);
-            if (defined $entry->[5]) {
-               $layout->set_text ($entry->[5]);
-               ($w, $h) = $layout->get_pixel_size;
-            } else {
+
+            $layout->set_text ($entry->[3] || $entry->[1]);
+            ($w, $h) = $layout->get_pixel_size;
+
+            if ($w > $maxwidth) {
                my $name = $entry->[1];
+
+               my $d = (length $name) * (1 - $maxwidth / $w);
+
+               substr $name, 0.5 * ((length $name) - $d), $d, "\x{2026}";
+
                while () {
-                  $layout->set_text ($entry->[5] = $name);
+                  $layout->set_text ($name);
                   ($w, $h) = $layout->get_pixel_size;
-                  last if $w < IW + IX - IY * 0.25;
+                  last if $w < $maxwidth;
                   substr $name, 0.5 * length $name, 2, "\x{2026}";
                   
                }
+
+               $entry->[3] = $name;
             }
+
             $self->{window}->draw_layout ($text_gc,
                      $x + (IW - $w) *0.5, $y + IH, $layout);
          }
@@ -668,14 +690,17 @@ sub set_paths {
       if ($path =~ /^(.*)\/([^\/]*)$/s) {
          ($dir, $file) = ($1, $2);
       } else {
-         ($dir, $file) = (".", $path);
+         ($dir, $file) = ($curdir, $path);
       }
 
       my $entry = [$dir, $file];
 
-      if ($file eq "." || $file eq ".xvpics") {
+      if ($file eq $curdir || $file eq $xvpics) {
          # skip
-      } elsif ($entry->[2] = read_p7 "$dir/.xvpics/$file") {
+      } elsif ($file eq $updir) {
+         $entry->[3] = "<parent>";
+         unshift @d, $entry;
+      } elsif ($entry->[2] = read_p7 "$dir/$xvpics/$file") {
          push @f, $entry;
       } else {
          # this is faster than a normal stat
@@ -698,6 +723,8 @@ sub set_paths {
 
 sub set_dir {
    my ($self, $dir) = @_;
+
+   $dir = File::Spec->canonpath ($dir);
 
    opendir my $fh, $dir
       or die "$dir: $!";

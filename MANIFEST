@@ -1,12 +1,15 @@
-Makefile.PL
 MANIFEST
+Changes
+Makefile.PL
 
 lib/Gtk2/CV.pm
 lib/Gtk2/CV/ImageWindow.pm
 lib/Gtk2/CV/Schnauzer.pm
+lib/Gtk2/CV/PostScript.pm
 
 CV.xs
 
+gtkrc
 images/cv.png
 images/dir.png
 images/file.png

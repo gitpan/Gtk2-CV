@@ -10,35 +10,59 @@ use Gtk2::CV;
 
 Gtk2::Rc->parse (Gtk2::CV::find_rcfile "gtkrc");
 
+use File::Spec;
+
+my $mainwin;
 my $viewer;
 my $schnauzer;
+my $info;
+my $help;
 
 sub new_schnauzer {
-   my $w = new Gtk2::Window;
-   $w->add (my $s = new Gtk2::CV::Schnauzer);
+   my $s = new Gtk2::CV::Schnauzer;
 
-   $s->signal_connect (activate => sub { $viewer->load_image ($_[1]) });
    $s->signal_connect_after (key_press_event => \&std_keys);
+   $s->signal_connect (activate => sub {
+      my $label = sprintf "%s (%d)",
+                  (File::Spec->splitpath ($_[1]))[2],
+                  -s $_[1];
+      $info->set_label ($label);
+      $viewer->load_image ($_[1]);
+   });
 
    $s;
 }
-
-$schnauzer = new_schnauzer;
-
-my $mainwin = $schnauzer->get_toplevel;
 
 sub std_keys {
    my $key = $_[1]->keyval;
    my $state = $_[1]->state;
 
-   my $ctrl = grep $_ eq "control-mask", @$state;
+   my $ctrl = $state * "control-mask";
 
    if ($key == $Gtk2::Gdk::Keysyms{q}) {
       main_quit Gtk2;
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{v}) {
-      my $s = new_schnauzer;
-      $s->set_dir (".");
-      $s->get_toplevel->show_all
+      my $w = new Gtk2::Window;
+      $w->add (my $s = new_schnauzer);
+      $s->set_dir (File::Spec->curdir);
+      $w->show_all;
+   } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{h}) {
+      unless ($help) {
+         require Gtk2::PodViewer;
+
+         $help = new Gtk2::Window;
+         $help->set_title ("CV Help");
+         $help->set_default_size (500, 300);
+         $help->signal_connect (delete_event => sub { $help->hide; 1 });
+
+         $help->add (my $sw = new Gtk2::ScrolledWindow);
+         $sw->add (my $h = new Gtk2::PodViewer);
+
+         #binmode DATA, ":utf8";
+         $h->load_string (do { local $/; <DATA> });
+      }
+
+      $help->show_all;
    } else {
       #$mainwin->show_all;
       $schnauzer->handle_key ($key, $state);
@@ -47,30 +71,48 @@ sub std_keys {
    1;
 }
 
-$viewer = new Gtk2::CV::ImageWindow;
+{
+   $viewer = new Gtk2::CV::ImageWindow;
 
-$viewer->set_title ("CV");
+   $viewer->set_title ("CV: Image");
 
-$viewer->signal_connect (key_press_event => \&std_keys);
-$viewer->signal_connect (delete_event => sub { main_quit Gtk2 });
+   $viewer->signal_connect (key_press_event => \&std_keys);
+   $viewer->signal_connect (delete_event => sub { main_quit Gtk2 });
 
-$viewer->signal_connect (button3_press_event => sub {
-   $mainwin->visible
-      ? $mainwin->hide
-      : $mainwin->show_all;
-});
+   $viewer->signal_connect (button3_press_event => sub {
+      $mainwin->visible
+         ? $mainwin->hide
+         : $mainwin->show_all;
+      1;
+   });
+
+   $schnauzer = new_schnauzer;
+
+   $mainwin = new Gtk2::Window;
+   $mainwin->set_title ("CV");
+   $mainwin->add (my $vbox = new Gtk2::VBox);
+   $mainwin->signal_connect (delete_event => sub { $mainwin->hide; 1; });
+
+   $vbox->add ($schnauzer);
+   $vbox->pack_end (my $frame = new Gtk2::Frame, 0, 0, 0);
+   $frame->add (my $hbox = new Gtk2::HBox 0, 0);
+   $hbox->pack_start ((new Gtk2::Label "Info"), 0, 0, 0);
+   $hbox->pack_start (($info = new Gtk2::Label), 1, 1, 0);
+}
 
 if (@ARGV) {
    $schnauzer->set_paths (\@ARGV);
    $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
 } else {
-   $schnauzer->set_dir (".");
+   $schnauzer->set_dir (File::Spec->curdir);
    $mainwin->show_all;
 }
 
 $viewer->show_all;
 
 main Gtk2;
+
+__DATA__
 
 =head1 NAME
 
@@ -126,7 +168,20 @@ You can use the following keys in the schnauzer window:
  ctrl-g      generate icons for the selected files
  ctrl-d      delete selected files WITHOUT ASKING AGAIN
 
+=head1 SECURITY CONSIDERATIONS
+
+CV uses Pixbuf to load images. Pixbuf is not considered safe for this
+purpose, though (from the gtk-2.2 release notes):
+
+"While efforts have been made to make gdk-pixbuf robust against invalid
+images, using gdk-pixbuf to load untrusted data is not recommended, due to
+the likelyhood that there are additional problems where an invalid image
+could cause gdk-pixbuf to crash or worse."
+
 =head1 BUGS/TODO
+
+ Pixbuf doesn't honor G_BROKEN_FILENAMES, so accessing files with names
+ incompatible with utf-8 fails.
 
  rotate on disk
  print
