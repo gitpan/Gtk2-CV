@@ -15,7 +15,8 @@ use Glib::Object::Subclass
       Glib::ParamSpec->string ("path", "Pathname", "The image pathname", "", [qw(writable readable)]),
    ],
    signals => {
-      image_changed => { flags => [qw/run-first/], return_type => undef, param_types => [] },
+      image_changed       => { flags => [qw/run-first/], return_type => undef, param_types => [] },
+      button3_press_event => { flags => [qw/run-first/], return_type => undef, param_types => [] },
    };
 
 sub INIT_INSTANCE {
@@ -116,17 +117,21 @@ sub do_realize {
 sub do_button_press {
    my ($self, $press, $event) = @_;
 
-   my $x = $event->x / $self->{sx} + $self->{ix};
-   my $y = $event->y / $self->{sy} + $self->{iy};
-
-   if ($press) {
-      $self->{ix_} = $x;
-      $self->{iy_} = $y;
+   if ($event->button == 3) {
+      $self->signal_emit ("button3_press_event") if $press;
    } else {
-      ($x, $self->{ix_}) = ($self->{ix_}, $x) if $self->{ix_} > $x;
-      ($y, $self->{iy_}) = ($self->{iy_}, $y) if $self->{iy_} > $y;
+      my $x = $event->x / $self->{sx} + $self->{ix};
+      my $y = $event->y / $self->{sy} + $self->{iy};
 
-      $self->crop (delete $self->{ix_}, delete $self->{iy_}, $x, $y);
+      if ($press) {
+         $self->{ix_} = $x;
+         $self->{iy_} = $y;
+      } else {
+         ($x, $self->{ix_}) = ($self->{ix_}, $x) if $self->{ix_} > $x;
+         ($y, $self->{iy_}) = ($self->{iy_}, $y) if $self->{iy_} > $y;
+
+         $self->crop (delete $self->{ix_}, delete $self->{iy_}, $x, $y);
+      }
    }
 }
 

@@ -1,5 +1,7 @@
 package Gtk2::CV::Schnauzer;
 
+use integer;
+
 use Errno ();
 
 use Gtk2;
@@ -22,6 +24,7 @@ sub IW() { 80 }
 sub IH() { 60 }
 sub IX() { 30 }
 sub IY() { 16 }
+sub FY() { 11 } # font-y
 
 sub SCROLL_Y() { 1  }
 sub PAGE_Y()   { 20 }
@@ -58,14 +61,14 @@ sub gen_p7 {
       my ($w, $h) = ($pb->get_width, $pb->get_height);
 
       if ($w * IH > $h * IW) {
-         $h = int $h * IW / $w;
+         $h = int $h * IW / $w + 0.5;
          $w = IW;
       } else {
-         $w = int $w * IH / $h;
+         $w = int $w * IH / $h + 0.5;
          $h = IH;
       }
 
-      my $p7 = $pb->scale_simple ($w, $h, 'tiles');
+      my $p7 = $pb->scale_simple ($w, $h, 'nearest');
 
       my $data = pb_to_p7 $p7;
 
@@ -85,16 +88,14 @@ my @file_img = img "file.png";
 sub coord {
    my ($self, $event) = @_;
 
-   use integer;
-
    my $x = $event->x / (IW + IX);
    my $y = $event->y / (IH + IY);
 
-   $x = $self->{cols} -1 if $x >= $self->{cols};
+   $x = $self->{cols} - 1 if $x >= $self->{cols};
 
    (
       (max 0, min $self->{cols} - 1, $x),
-      (max 0, min $self->{rows} - 1, $y) + $self->{row},
+      (max 0, min $self->{page} - 1, $y) + $self->{row},
    );
 }
 
@@ -111,8 +112,6 @@ sub INIT_INSTANCE {
    $self->{adj} = $self->{scroll}->get ("adjustment");
 
    $self->{adj}->signal_connect (value_changed => sub {
-      use integer;
-
       my $row = int $_[0]->value;
 
       if (my $diff = $self->{row} - $row) {
@@ -125,7 +124,7 @@ sub INIT_INSTANCE {
                $self->{window}->clear_area (0, $self->{page} * (IH + IY), $self->{width}, $self->{height});
             } else {
                $self->{window}->scroll (0, $diff * (IH +IY));
-               $self->invalidate (0, $self->{page} - 1, $self->{cols} - 1, $self->{page} - 1);
+               $self->invalidate (0, $self->{page} + $diff, $self->{cols} - 1, $self->{page} + $diff);
             }
             $self->{window}->process_all_updates;
          } else {
@@ -148,8 +147,6 @@ sub INIT_INSTANCE {
    });
 
    $self->{draw}->signal_connect (configure_event => sub {
-      use integer;
-
       $self->{width}  = $_[1]->width;
       $self->{height} = $_[1]->height;
       $self->{cols} = ($self->{width}  / (IW + IX)) || 1;
@@ -176,7 +173,7 @@ sub INIT_INSTANCE {
       delete $self->{cursor};
 
       unless (grep $_ eq "shift-mask", @{$_[1]->state}) {
-         delete $_->[3] for @{$self->{entry}};
+         $self->clear_selection;
          $self->invalidate (0, 0, $self->{cols} - 1, $self->{rows} - 1);
          delete $self->{cursor_current};
          $self->{cursor} = $cursor;
@@ -184,14 +181,19 @@ sub INIT_INSTANCE {
 
       my $entry = $self->{entry}[$cursor];
 
-      if ($entry->[3]) {
-         delete $entry->[3];
+      if ($self->{sel}{$cursor}) {
+         delete $self->{sel}{$cursor};
          delete $self->{sel_x1};
+
+         $self->invalidate (
+            (($cursor - $self->{offs}) % $self->{cols},
+             ($cursor - $self->{offs}) / $self->{cols}) x 2
+         );
       } else {
          ($self->{sel_x1}, $self->{sel_y1}) =
          ($self->{sel_x2}, $self->{sel_y2}) = ($x, $y);
-
-         $self->selrect (1);
+         $self->{oldsel} = $self->{sel};
+         $self->selrect;
       }
 
       $self->emit_activate ($cursor)
@@ -226,14 +228,8 @@ sub INIT_INSTANCE {
             $row = max 0, min $row, $self->{maxrow};
 
             if ($self->{row} != $row) {
-               my $y = $self->{sel_y2} + $row - $self->{row};
-
-               ($self->{sel_y2}, $y) = ($y, $self->{sel_y2});
-               $self->selrect (1);
-               ($self->{sel_y2}, $y) = ($y, $self->{sel_y2});
-               $self->selrect (-1);
-               ($self->{sel_y2}, $y) = ($y, $self->{sel_y2});
-
+               $self->{sel_y2} += $row - $self->{row};
+               $self->selrect;
                $self->{adj}->set_value ($row);
             }
 
@@ -244,17 +240,16 @@ sub INIT_INSTANCE {
       my ($x, $y) = $self->coord ($_[1]);
 
       if ($x != $self->{sel_x2} || $y != $self->{sel_y2}) {
-         ($self->{sel_x2}, $self->{sel_y2}, $x, $y) = ($x, $y, $self->{sel_x2}, $self->{sel_y2});
-         $self->selrect (1);
-         ($self->{sel_x2}, $self->{sel_y2}, $x, $y) = ($x, $y, $self->{sel_x2}, $self->{sel_y2});
-         $self->selrect (-1);
-         ($self->{sel_x2}, $self->{sel_y2}, $x, $y) = ($x, $y, $self->{sel_x2}, $self->{sel_y2});
+         ($self->{sel_x2}, $self->{sel_y2}) = ($x, $y);
+         $self->selrect;
       }
 
       1;
    });
 
    $self->{draw}->signal_connect (button_release_event => sub {
+      delete $self->{oldsel};
+      
       remove Glib::Source delete $self->{scroll_id} if exists $self->{scroll_id};
 
       return unless exists $self->{sel_x1};
@@ -293,30 +288,22 @@ sub emit_activate {
 sub make_visible {
    my ($self, $offs) = @_;
 
-   use integer;
-
    my $row = $offs / $self->{cols};
-   my $value = $self->{adj}->value;
 
-   if ($row < $value or $row >= $value + $self->{page}) {
-      $self->{adj}->set_value ($row < $self->{maxrow} ? $row : $self->{maxrow});
-   }
+   $self->{adj}->set_value ($row < $self->{maxrow} ? $row : $self->{maxrow})
+      if $row < $self->{row} || $row >= $self->{row} + $self->{page};
 }
 
 sub draw_entry {
    my ($self, $offs) = @_;
 
-   use integer;
-
    my $row = $offs / $self->{cols};
-   my $value = $self->{adj}->value;
 
-   if ($row >= $value and $row < $value + $self->{page}) {
+   if ($row >= $self->{row} and $row < $self->{row} + $self->{page}) {
       $offs -= $self->{offs};
       $self->invalidate (
          ($offs % $self->{cols}, $offs / $self->{cols}) x 2,
       );
-      $self->{adj}->set_value ($row < $self->{maxrow} ? $row : $self->{maxrow});
    }
 
 }
@@ -327,7 +314,7 @@ sub cursor_valid {
    my $cursor = $self->{cursor};
 
    defined $cursor
-        && $self->{entry}[$cursor][3]
+        && $self->{sel}{$cursor}
         && $cursor >= $self->{offs}
         && $cursor < $self->{offs} + $self->{page} * $self->{cols};
 }
@@ -335,13 +322,11 @@ sub cursor_valid {
 sub cursor_move {
    my ($self, $inc) = @_;
 
-   use integer;
-
    my $cursor = $self->{cursor};
    delete $self->{cursor_current};
 
    if ($self->cursor_valid) {
-      delete $self->{entry}[$cursor][3];
+      delete $self->{sel}{$cursor};
       my $oldcursor = $cursor;
       
       $cursor += $inc;
@@ -350,9 +335,9 @@ sub cursor_move {
       $cursor -= $inc if $cursor >= @{$self->{entry}};
 
       if ($cursor < $self->{offs}) {
-         $self->{adj}->set_value ($self->{adj}->get_value - 1);
+         $self->{adj}->set_value ($self->{row} - 1);
       } elsif ($cursor >= $self->{offs} + $self->{page} * $self->{cols}) {
-         $self->{adj}->set_value ($self->{adj}->get_value + 1);
+         $self->{adj}->set_value ($self->{row} + $self->{page});
       }
 
       $self->invalidate (
@@ -360,16 +345,20 @@ sub cursor_move {
           ($oldcursor - $self->{offs}) / $self->{cols}) x 2
       );
    } else {
-      delete $_->[3] for @{$self->{entry}};
+      $self->clear_selection;
+
       if ($inc < 0) {
          $cursor = $self->{offs} + $self->{page} * $self->{cols} - 1;
       } else {
-         $cursor = $self->{offs} + 0;
+         $cursor = 0;
+         $cursor++ while -d "$self->{entry}[$cursor][0]/$self->{entry}[$cursor][1]/.";
+
+         $self->make_visible ($cursor);
       }
       
    }
    $self->{cursor} = $cursor;
-   $self->{entry}[$cursor][3] = 1;
+   $self->{sel}{$cursor} = $self->{entry}[$cursor];
 
    $self->invalidate (
       (($cursor - $self->{offs}) % $self->{cols},
@@ -381,20 +370,25 @@ sub clear_cursor {
    my ($self) = @_;
 
    if (defined (my $cursor = delete $self->{cursor})) {
-      delete $self->{entry}[$cursor][3];
+      delete $self->{sek}{$cursor};
    }
+}
+
+sub clear_selection {
+   my ($self) = @_;
+
+   delete $self->{cursor};
+   delete $self->{sel};
 }
 
 sub get_selection {
    my ($self) = @_;
 
-   grep $_->[3], @{$self->{entry}};
+   $self->{sel};
 }
 
 sub handle_key {
    my ($self, $key, $state) = @_;
-
-   use integer;
 
    my $ctrl = grep $_ eq "control-mask", @$state;
 
@@ -433,20 +427,17 @@ sub handle_key {
       $self->emit_activate ($self->{cursor});
 
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{g}) {
-      for my $i (0 .. $#{$self->{entry}}) {
-         my $e = $self->{entry}[$i];
-         next unless $e->[3];
+      for my $idx (sort { $a <=> $b } keys %{$self->{sel}}) {
+         my $entry = delete $self->{sel}{$idx};
 
-         $self->add_idle (sub {
-            $self->make_visible ($i);
+         $self->make_visible ($idx);
 
-            mkdir "$e->[0]/.xvpics", 0777;
-            gen_p7 $e;
+         mkdir "$entry->[0]/.xvpics", 0777;
+         gen_p7 $entry;
 
-            delete $e->[3];
+         $self->draw_entry ($idx);
 
-            $self->draw_entry ($i);
-         });
+         $self->{window}->process_all_updates;
       }
 
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{d}) {
@@ -463,16 +454,16 @@ sub handle_key {
 
       my ($idx, $cursor) = (0, 0);
 
-      for my $entry (@{$self->{entry}}) {
-         delete $entry->[3];
-         $idx++;
+      $self->clear_selection;
 
+      for my $entry (@{$self->{entry}}) {
+         $idx++;
          $cursor = $idx if $key gt $entry->[1];
       }
 
       if ($cursor < @{$self->{entry}}) {
          delete $self->{cursor_current};
-         $self->{entry}[$cursor][3] = 1;
+         $self->{sel}{$cursor} = $self->{entry}[$cursor];
          $self->{cursor} = $cursor;
 
          $self->{adj}->set_value (min $self->{maxrow}, $cursor / $self->{cols});
@@ -496,7 +487,7 @@ sub invalidate {
 }
 
 sub selrect {
-   my ($self, $inc) = @_;
+   my ($self) = @_;
 
    my ($x1, $y1) = ($self->{sel_x1}, $self->{sel_y1});
    my ($x2, $y2) = ($self->{sel_x2}, $self->{sel_y2});
@@ -504,16 +495,24 @@ sub selrect {
    ($x1, $x2) = ($x2, $x1) if $x2 < $x1;
    ($y1, $y2) = ($y2, $y1) if $y2 < $y1;
 
-   for my $y ($y1 .. $y2) {
-      for my $x ($x1 .. $x2) {
-         my $offs = $x + $y * $self->{cols};
-         return if $offs > $#{$self->{entry}};
+   my $prev = $self->{sel};
+   $self->{sel} = { %{$self->{oldsel}} };
 
-         my $flag = \$self->{entry}[$offs][3];
-         my $old = $$flag;
-         $$flag += $inc;
-         $self->invalidate ($x, $y - $self->{row}, $x, $y - $self->{row}) if !$old != !$$flag;
+   for my $y ($y1 .. $y2) {
+      my $idx = $y * $self->{cols};
+      for my $x ($x1 .. $x2) {
+         my $idx = $idx + $x;
+         return if $idx > $#{$self->{entry}};
+
+         $self->{sel}{$idx} = $self->{entry}[$idx];
       }
+   }
+
+   for my $idx (keys %{$self->{sel}}) {
+      $self->draw_entry ($idx) if !exists $prev->{$idx};
+   }
+   for my $idx (keys %$prev) {
+      $self->draw_entry ($idx) if !exists $self->{sel}{$idx};
    }
 }
 
@@ -535,11 +534,13 @@ sub setadj {
    $self->{maxrow} = $self->{rows} - $self->{page};
 
    $self->{adj}->set_value ($self->{maxrow})
-      if $self->{adj}->value > $self->{maxrows};
+      if $self->{row} > $self->{maxrows};
 }
 
 sub expose {
    my ($self, $event) = @_;
+
+   no integer;
 
    return unless @{$self->{entry}};
 
@@ -561,9 +562,9 @@ sub expose {
 
    # pango is SOOO extremely broken. the formula below doesn't even work...
    # because there is NO PORTABLE WAY TO SET THE FONT SIZE IN PIXELS
-   #$font->set_size (IY * $self->{window}->get_screen->get_height_mm / $self->{window}->get_screen->get_height
+   #$font->set_size (FY * $self->{window}->get_screen->get_height_mm / $self->{window}->get_screen->get_height
    #                    * (72.27 / 25.4) * Gtk2::Pango->scale);
-   $font->set_size (IY * 0.7 * 1/96 * 72.27 * Gtk2::Pango->scale);
+   $font->set_size (FY * 1/96 * 72.27 * Gtk2::Pango->scale);
 
    my $layout = new Gtk2::Pango::Layout $context;
 
@@ -578,7 +579,7 @@ outer:
             my $text_gc;
 
             # selected?
-            if ($entry->[3]) {
+            if ($self->{sel}{$idx}) {
                $self->{window}->draw_rectangle ($self->style->black_gc, 1,
                        $x - IX * 0.5, $y, IW + IX, IH + IY);
                $text_gc = $self->style->white_gc;
@@ -649,29 +650,34 @@ sub rescan {
 sub set_paths {
    my ($self, $paths) = @_;
 
-   delete $self->{cursor};
+   $self->clear_selection;
+
    delete $self->{entry};
 
    my (@d, @f);
    my ($dir, $file);
 
-   for (sort @$paths) {
-      if (/^(.*)\/([^\/]*)$/s) {
+   for my $path (sort @$paths) {
+      if ($path =~ /^(.*)\/([^\/]*)$/s) {
          ($dir, $file) = ($1, $2);
       } else {
-         ($dir, $file) = (".", $_);
+         ($dir, $file) = (".", $path);
       }
 
       my $entry = [$dir, $file];
 
-      if ($entry->[2] = read_p7 "$dir/.xvpics/$file") {
+      if ($file eq "." || $file eq ".xvpics") {
+         # skip
+      } elsif ($entry->[2] = read_p7 "$dir/.xvpics/$file") {
          push @f, $entry;
       } else {
          # this is faster than a normal stat
-         if (stat "$_/.") {
+         if (stat "$path/.") {
             push @d, $entry;
          } elsif ($! == Errno::ENOTDIR) {
             push @f, $entry;
+         } else {
+            # does not exist
          }
       }
    }
@@ -689,7 +695,7 @@ sub set_dir {
    opendir my $fh, $dir
       or die "$dir: $!";
 
-   $self->set_paths ([readdir $fh]);
+   $self->set_paths ([map "$dir/$_", readdir $fh]);
 }
 
 sub add_idle {

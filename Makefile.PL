@@ -21,7 +21,7 @@ EOF
 
 WriteMakefile(
     dist	=> {
-	            PREOP	=> 'chmod -R u=rwX,go=rX . ;',
+	            PREOP	=> 'pod2text bin/cv | tee README >$(DISTVNAME)/README; chmod -R u=rwX,go=rX . ;',
 	            COMPRESS	=> 'gzip -9v',
 	            SUFFIX	=> '.gz',
 	           },
@@ -38,6 +38,8 @@ WriteMakefile(
        'lib/Gtk2/CV/ImageWindow.pm'	=> '$(INST_LIBDIR)/CV/ImageWindow.pm',
        'lib/Gtk2/CV/Schnauzer.pm'	=> '$(INST_LIBDIR)/CV/Schnauzer.pm',
        'lib/Gtk2/CV.pm'			=> '$(INST_LIBDIR)/CV.pm',
+
+       'gtkrc'				=> '$(INST_LIBDIR)/CV/gtkrc',
 
        'images/cv.png'			=> '$(INST_LIBDIR)/CV/images/cv.png',
        'images/dir.png'			=> '$(INST_LIBDIR)/CV/images/dir.png',

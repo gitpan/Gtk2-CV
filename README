@@ -1,0 +1,62 @@
+NAME
+    cv - a fast gtk+ image viewer modeled after xv
+
+SYNOPSIS
+       cv [file...]
+
+DESCRIPTION
+    None yet.
+
+  THE IMAGE WINDOW
+    You can use the following keys in the image window:
+
+     q       quit the program
+     <       half the image size
+     >       double the image size
+     ,       shrink the image by 10%
+     .       enlarge the image by 10%
+     n       reset to normal size
+     m       maximize to screensize
+     M       maxime to screensize, respecting image aspect
+     u       uncrop
+     r       set scaling mode to 'nearest' (fastest)
+     s       set scaling mode to 'bilinear' (default)
+     S       set scaling mode to 'hyper' (slowest)
+     t       rotate clockwise 90°
+     T       rotate counterclockwise°
+     ctrl-v  open a new visual schnauzer window for the current dir
+
+    The following keys are redirected to the default visual schnauzer
+    window:
+
+     space     next image
+     backspace last image
+
+  THE VISUAL SCHNAUZER
+    You can use the following keys in the schnauzer window:
+
+     space       move to and display next image
+     backspace   move to and display previous image
+     return      display selected picture
+
+     cursor keys move selection
+     page-up     move one page up
+     page-down   move one page down
+     home        move to first file
+     end         move to last file
+
+     ctrl-g      generate icons for the selected files
+     ctrl-d      delete selected files WITHOUT ASKING AGAIN
+
+BUGS/TODO
+     rotate on disk
+     print
+     lots of ui issues
+     save(?)
+     preferences
+     ctrl-u in schnauzer
+     shift-cursor in schnauzer
+
+AUTHOR
+    Marc Lehmann <cv@plan9.de>.
+

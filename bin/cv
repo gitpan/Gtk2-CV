@@ -6,6 +6,10 @@ use Gtk2::Gdk::Keysyms;
 use Gtk2::CV::ImageWindow;
 use Gtk2::CV::Schnauzer;
 
+use Gtk2::CV;
+
+Gtk2::Rc->parse (Gtk2::CV::find_rcfile "gtkrc");
+
 my $viewer;
 my $schnauzer;
 
@@ -16,11 +20,12 @@ sub new_schnauzer {
    $s->signal_connect (activate => sub { $viewer->load_image ($_[1]) });
    $s->signal_connect_after (key_press_event => \&std_keys);
 
-   $s->set_dir (".");
-   $w->show_all;
-
    $s;
 }
+
+$schnauzer = new_schnauzer;
+
+my $mainwin = $schnauzer->get_toplevel;
 
 sub std_keys {
    my $key = $_[1]->keyval;
@@ -31,8 +36,11 @@ sub std_keys {
    if ($key == $Gtk2::Gdk::Keysyms{q}) {
       main_quit Gtk2;
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{v}) {
-      new_schnauzer;
+      my $s = new_schnauzer;
+      $s->set_dir (".");
+      $s->get_toplevel->show_all
    } else {
+      $mainwin->show_all;
       $schnauzer->handle_key ($key, $state);
    }
 
@@ -40,10 +48,17 @@ sub std_keys {
 }
 
 $viewer = new Gtk2::CV::ImageWindow;
+
+$viewer->set_title ("CV");
+
 $viewer->signal_connect (key_press_event => \&std_keys);
 $viewer->signal_connect (delete_event => sub { main_quit Gtk2 });
 
-$schnauzer = new_schnauzer;
+$viewer->signal_connect (button3_press_event => sub {
+   $mainwin->visible
+      ? $mainwin->hide
+      : $mainwin->show_all;
+});
 
 if (@ARGV) {
    $viewer->load_image ($ARGV[0]);
@@ -51,6 +66,8 @@ if (@ARGV) {
    if (@ARGV > 1) {
       $schnauzer->set_paths (\@ARGV);
    }
+} else {
+   $schnauzer->set_dir (".");
 }
 
 $viewer->show_all;
