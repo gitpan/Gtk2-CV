@@ -798,7 +798,7 @@ sub set_paths {
                            } else {
                               ($dir, $file) = ($curdir, $_);
                            }
-                           (my $key = lc $file) =~ s/(\d+{1,5})/sprintf "%05d", $1/ge;
+                           (my $key = lc $file) =~ s/(\d{1,5})/sprintf "%05d", $1/ge;
                            [$dir, $file, $key]
                         }
                         @$paths
