@@ -1,5 +1,8 @@
 #!/opt/bin/perl
 
+use Cwd ();
+use Encode ();
+
 use Gtk2 -init;
 use Gtk2::Gdk::Keysyms;
 
@@ -11,6 +14,9 @@ use Gtk2::CV;
 Gtk2::Rc->parse (Gtk2::CV::find_rcfile "gtkrc");
 
 use File::Spec;
+
+require Gtk2::CV::Plugin;
+require "$ENV{HOME}/.cvrc" if -r "$ENV{HOME}/.cvrc";
 
 my $mainwin;
 my $viewer;
@@ -31,6 +37,21 @@ sub new_schnauzer {
       $info->set_label ($label);
       $viewer->load_image ($_[1]);
    });
+   $s->signal_connect (chdir => sub {
+      my ($self, $dir) = @_;
+
+      my $path = Cwd::abs_path $dir;
+
+      $self->realize;
+      $self->window->property_change (
+         Gtk2::Gdk::Atom->intern ("_X_CWD", 0),
+         Gtk2::Gdk::Atom->intern ("UTF8_STRING", 0),
+         Gtk2::Gdk::CHARS, 'replace',
+         Encode::encode_utf8 $path,
+      );
+   });
+
+   Gtk2::CV::Plugin->call (new_schnauzer => $s);
 
    $s;
 }
@@ -70,11 +91,10 @@ sub std_keys {
 
       $help->show_all;
    } else {
-      #$mainwin->show_all;
-      $schnauzer->handle_key ($key, $state);
+      return 0;
    }
 
-   1;
+   1
 }
 
 {
@@ -82,7 +102,10 @@ sub std_keys {
 
    $viewer->set_title ("CV: Image");
 
-   $viewer->signal_connect (key_press_event => \&std_keys);
+   $viewer->signal_connect (key_press_event => sub {
+      &std_keys
+         or $schnauzer->signal_emit (key_press_event => $_[1])
+   });
    $viewer->signal_connect (delete_event => sub { main_quit Gtk2 });
 
    $viewer->signal_connect (button3_press_event => sub {
@@ -91,6 +114,8 @@ sub std_keys {
          : $mainwin->show_all;
       1;
    });
+
+   Gtk2::CV::Plugin->call (new_imagewindow => $viewer);
 
    $schnauzer = new_schnauzer;
 
@@ -104,18 +129,19 @@ sub std_keys {
    $frame->add (my $hbox = new Gtk2::HBox 0, 0);
    $hbox->pack_start ((new Gtk2::Label "Info"), 0, 0, 0);
    $hbox->pack_start (($info = new Gtk2::Label), 1, 1, 0);
+   $info->set (wrap => 1);
 
    $schnauzer->set_geometry_hints;
 }
 
 if (@ARGV) {
-   $_ = Glib::filename_to_unicode $_ for @ARGV;
-   $schnauzer->set_paths (\@ARGV);
+   $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV]);
    $schnauzer->show_all;
    $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
 } else {
    $schnauzer->set_dir (File::Spec->curdir);
    $mainwin->show_all;
+   $viewer->show_all;
 }
 
 $viewer->show_all;
@@ -159,6 +185,20 @@ You can use the following keys in the image window:
  ctrl-s  rescan visual schnauzer files for updates/deletes etc.
  ctrl-e  run an editor ($CV_EDITOR or "gimp") on the current image.
 
+And when playing movies, these additional keys are active:
+
+ left    rewind by 10 seconds
+ right   forward by 10 seconds
+ down    rewind by 60 seconds
+ up      forward by 60 seconds
+ pg_up   rewind by 600 seconds
+ pg_down forward by 600 seconds
+ o       toggle on-screen display
+ p       pause/unpause
+ escape  stop playing
+ 9       turn volume down
+ 0       turn volume up
+
 The following keys are redirected to the default visual schnauzer window:
 
  space     next image
@@ -181,14 +221,25 @@ You can use the following keys in the schnauzer window:
  ctrl-d      delete selected files WITHOUT ASKING AGAIN
  ctrl-g      generate icons for the selected files
  ctrl-u      update selected (or all) icons if neccessary
+ ctrl-a      select all files
 
 =head1 ENVIRONMENT
 
 =over 4
 
+=item CV_EDITOR
+
+The program that gets executed when the user presses C<CTRL-e> in the
+Schnauzer or image window. The default is C<gimp>.
+
 =item CV_PRINT_DESTINATION
 
 The default (perl-style) destination to use in the print dialog.
+
+=item CV_TRASHCAN
+
+When set, must point to a directory where all files that are deleted are
+moved to. If unset, files that are deleted are really being deleted.
 
 =back
 

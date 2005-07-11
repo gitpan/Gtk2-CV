@@ -1,7 +1,7 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         Gtk2-CV
-version:      0.3
+version:      0.5
 version_from: lib/Gtk2/CV.pm
 installdirs:  site
 requires:
@@ -9,6 +9,7 @@ requires:
     Gtk2:                          1.011
     Gtk2::GladeXML:                0.93
     Gtk2::PodViewer:               0.03
+    IO::AIO:                       0.4
 
 distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.21
+generated_by: ExtUtils::MakeMaker version 6.23

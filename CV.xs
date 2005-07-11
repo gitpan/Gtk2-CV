@@ -238,6 +238,62 @@ pb_to_p7 (GdkPixbuf *pb)
 	OUTPUT:
         RETVAL
 
+SV *
+make_histogram (SV *ar)
+        CODE:
+{
+        int i;
+        AV *av, *result;
+
+        if (!SvROK (ar) || SvTYPE (SvRV (ar)) != SVt_PVAV)
+          croak ("Not an array ref as first argument to make_histogram");
+
+        av = (AV *) SvRV (ar);
+        result = newAV ();
+
+        for (i = 0; i <= av_len (av); ++i)
+          {
+            const int HISTSIZE = 64;
+
+            int j;
+            SV *sv = *av_fetch (av, i, 1);
+            STRLEN len;
+            char *buf = SvPVbyte (sv, len);
+
+            int tmphist[HISTSIZE];
+            float *hist;
+
+            SV *histsv = newSV (HISTSIZE * sizeof (float) + 1);
+            SvPOK_on (histsv);
+            SvCUR_set (histsv, HISTSIZE * sizeof (float));
+            hist = (float *)SvPVX (histsv);
+
+            Zero (tmphist, sizeof (tmphist), char);
+
+            for (j = len; j--; )
+              {
+                unsigned int idx
+                    = ((*buf & 0xc0) >> 2)
+                    | ((*buf & 0x18) >> 1)
+                    |  (*buf & 0x03);
+
+                ++tmphist[idx];
+                ++buf;
+              }
+            
+            for (j = 0; j < HISTSIZE; ++j)
+              hist[j] = (float)tmphist[j] / (len + 1e-30);
+
+            av_push (result, histsv);
+          }
+
+        RETVAL = newRV_noinc ((SV *)result);
+}
+        OUTPUT:
+        RETVAL
+
+
+
 #############################################################################
 
 MODULE = Gtk2::CV PACKAGE = Gtk2::CV::PostScript

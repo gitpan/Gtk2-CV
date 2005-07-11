@@ -8,10 +8,10 @@ use Gtk2::CV::PrintDialog;
 
 use List::Util qw(min max);
 
-my $title_img = Gtk2::CV::require_image "cv.png";
+use POSIX ();
+use FileHandle ();
 
-# no, muppet, it's not for speed, it's for readability only :)
-my $gtk20 = (Gtk2->get_version_info)[1] < 2;
+my $title_img = Gtk2::CV::require_image "cv.png";
 
 use Glib::Object::Subclass
    Gtk2::Window,
@@ -45,6 +45,7 @@ sub INIT_INSTANCE {
                           button_release_mask pointer-motion-hint-mask pointer-motion-mask)]);
    $self->can_focus (1);
    $self->set_size_request (0, 0);
+   #$self->set_resize_mode ("immediate");
 
    $self->{interp} = 'bilinear';
 
@@ -63,6 +64,12 @@ sub SET_PROPERTY {
    } else {
       $self->{$pspec} = $newval;
    }
+}
+
+sub FINALIZE_INSTANCE {
+   my ($self) = @_;
+
+   $self->kill_mplayer;
 }
 
 sub do_image_changed {
@@ -86,7 +93,6 @@ sub set_subimage {
    }
 }
 
-
 sub set_image {
    my ($self, $image) = @_;
 
@@ -95,20 +101,95 @@ sub set_image {
    $self->set_subimage ($image);
 }
 
+sub kill_mplayer {
+   my ($self) = @_;
+
+   if ($self->{mplayer_pid} > 0) {
+      local $SIG{PIPE} = 'IGNORE';
+      print {$self->{mplayer_fh}} "quit\n";
+      close $self->{mplayer_fh};
+      #kill INT => $self->{mplayer_pid};
+      waitpid delete $self->{mplayer_pid}, 0;
+      (delete $self->{mplayer_box})->destroy;
+   }
+}
+
 sub clear_image {
    my ($self) = @_;
 
+   $self->kill_mplayer;
    $self->set_image ($title_img);
 }
 
 sub load_image {
    my ($self, $path) = @_;
 
-   $self->{path} = $path;
-
+   $self->kill_mplayer;
    delete $self->{dw};
 
+   $self->{path} = $path;
+
    my $image = eval { new_from_file Gtk2::Gdk::Pixbuf $path };
+
+   if (!$image) {
+      $path = "./$path" if $path =~ /^-/;
+
+      # try video
+      my $mplayer = qx{LC_ALL=C exec mplayer </dev/null 2>/dev/null -sub /dev/null -sub-fuzziness 0 -nolirc -cache-min 0 -noconsolecontrols -identify -vo null -ao null -frames 0 \Q$path};
+
+      my $w = $mplayer =~ /^ID_VIDEO_WIDTH=(\d+)$/sm ? $1 : undef;
+      my $h = $mplayer =~ /^ID_VIDEO_HEIGHT=(\d+)$/sm ? $1 : undef;
+
+      if ($w && $h) {
+         if ($mplayer =~ /^ID_VIDEO_ASPECT=([0-9\.]+)$/sm && $1 > 0) {
+            $w = POSIX::ceil $w * $1 * ($h / $w); # correct aspect ratio, assume square pixels
+         } else {
+            # no idea what to do, mplayer's aspect fatcors seem to be random
+            #$w = POSIX::ceil $w * 1.50 * ($h / $w); # correct aspect ratio, assume square pixels
+            #$w = POSIX::ceil $w * 1.33;
+         }
+
+         $image = new Gtk2::Gdk::Pixbuf "rgb", 0, 8, $w, $h;
+         $image->fill ("\0\0\0");
+
+         # d'oh, we need to do that because realize() doesn't reliably cause
+         # the window to have the correct size
+         $self->show;
+
+         # add a couple of windows just for mplayer's sake
+         my $box = $self->{mplayer_box} = new Gtk2::EventBox;
+         $box->set_above_child (1);
+         $box->set_visible_window (0);
+         $box->set_events ([]);
+         my $window = $self->{mplayer_window} = new Gtk2::DrawingArea;
+         $box->add ($window);
+         $self->add ($box);
+         $box->show_all;
+
+         $self->{mplayer_window}->realize;
+         my $xid = $self->{mplayer_window}->window->get_xid;
+
+         pipe my $rfh, $self->{mplayer_fh};
+         $self->{mplayer_fh}->autoflush (1);
+
+         $self->{mplayer_pid} = fork;
+
+         if ($self->{mplayer_pid} == 0) {
+            open STDIN, "<&" . fileno $rfh;
+            open STDOUT, ">/dev/null";
+            open STDERR, ">/dev/null";
+            exec "mplayer", qw(-slave -nofs -nokeepaspect -noconsolecontrols -nomouseinput -zoom -fixed-vo -loop 0),
+                            -screenw => $w, -screenh => $h, -wid => $xid, $path;
+            POSIX::_exit 0;
+         }
+
+         close $rfh;
+      } else {
+         # probably audio, or a real error
+      }
+   } elsif ($@) {
+      warn "$@";
+   }
 
    if ($image) {
       $self->set_image ($image);
@@ -123,13 +204,8 @@ sub do_realize {
 
    $self->{window} = $self->window;
 
-   if ($gtk20) {
-      $self->{sw} = Gtk2::Gdk->screen_width;
-      $self->{sh} = Gtk2::Gdk->screen_height;
-   } else {
-      $self->{sw} = $self->{window}->get_screen->get_width;
-      $self->{sh} = $self->{window}->get_screen->get_height;
-   }
+   $self->{sw} = $self->{window}->get_screen->get_width;
+   $self->{sh} = $self->{window}->get_screen->get_height;
 
    $self->auto_resize if $self->{image};
 
@@ -210,11 +286,11 @@ sub motion_notify_event {
 sub auto_position {
    my ($self, $w, $h) = @_;
 
-   if (my $window = $self->{window}) {
-      my ($x, $y) = $window->get_position;
+   if ($self->{window}) {
+      my ($x, $y) = $self->get_position;
       my $nx = max 0, min $self->{sw} - $w, $x;
       my $ny = max 0, min $self->{sh} - $h, $y;
-      $window->move ($nx, $ny) if $nx != $x || $ny != $y;
+      $self->move ($nx, $ny) if $nx != $x || $ny != $y;
    }
 }
 
@@ -235,7 +311,8 @@ sub auto_resize {
 sub resize_maxpect {
    my ($self) = @_;
 
-   my ($w, $h) = ($self->{iw} * $self->{sh} / $self->{ih}, $self->{sh});
+   my ($w, $h) = (int ($self->{iw} * $self->{sh} / $self->{ih}),
+                  int ($self->{sh}));
    ($w, $h) = ($self->{sw}, $self->{ih} * $self->{sw} / $self->{iw}) if $w > $self->{sw};
    $self->resize ($w, $h);
 }
@@ -252,9 +329,9 @@ sub resize {
    $self->{dh} = $h;
 
    $self->auto_position ($w, $h);
-   $self->{window}->resize ($w, $h);
+   $self->window->resize ($w, $h);
 
-   $self->schedule_redraw;
+   $self->redraw;
 }
 
 sub uncrop {
@@ -280,6 +357,8 @@ sub crop {
 
 sub handle_key {
    my ($self, $key, $state) = @_;
+
+   local $SIG{PIPE} = 'IGNORE'; # for mplayer_fh
 
    if ($state * "control-mask") {
       if ($key == $Gtk2::Gdk::Keysyms{p}) {
@@ -326,15 +405,15 @@ sub handle_key {
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{r}) {
          $self->{interp} = 'nearest';
-         $self->schedule_redraw;
+         $self->redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
          $self->{interp} = 'bilinear';
-         $self->schedule_redraw;
+         $self->redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{S}) {
          $self->{interp} = 'hyper';
-         $self->schedule_redraw;
+         $self->redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{t}) {
          $self->set_subimage (Gtk2::CV::flop (Gtk2::CV::transpose $self->{subimage}));
@@ -348,6 +427,32 @@ sub handle_key {
          $self->draw_drag_rect;
 
          delete $self->{drag_info};
+
+      # extra mplayer controls
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Right}) {
+         print {$self->{mplayer_fh}} "seek +10\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Left}) {
+         print {$self->{mplayer_fh}} "seek -10\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Up}) {
+         print {$self->{mplayer_fh}} "seek +60\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Down}) {
+         print {$self->{mplayer_fh}} "seek -60\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Page_Up}) {
+         print {$self->{mplayer_fh}} "seek +600\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Page_Down}) {
+         print {$self->{mplayer_fh}} "seek -600\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{o}) {
+         print {$self->{mplayer_fh}} "osd\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{p}) {
+         print {$self->{mplayer_fh}} "pause\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Escape}) {
+         print {$self->{mplayer_fh}} "quit\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{9}) {
+         print {$self->{mplayer_fh}} "volume -1\n";
+      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{0}) {
+         print {$self->{mplayer_fh}} "volume 1\n";
+#      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{f}) {
+#         print {$self->{mplayer_fh}} "vo_fullscreen\n";
 
       } else {
 
@@ -366,7 +471,7 @@ sub schedule_redraw {
 
       $self->redraw;
       0
-   }, undef, -10;
+   }, undef, 10;
 }
 
 sub redraw {
@@ -386,25 +491,18 @@ sub redraw {
       $self->{sy} = $self->{dh} / $self->{ih};
       $pb = new Gtk2::Gdk::Pixbuf 'rgb', $pb->get_has_alpha, 8, $self->{dw}, $self->{dh};
       $self->{subimage}->scale ($pb, 0, 0, $self->{dw}, $self->{dh},
-                  0, 0,
-                  $self->{sx}, $self->{sy},
-                  $self->{interp});
+                                0, 0,
+                                $self->{sx}, $self->{sy},
+                                $self->{interp});
    } else {
       $self->{sx} =
       $self->{sy} = 1;
    }
 
-   if ($gtk20) {
-      $pb->render_to_drawable ($pm,
-             $self->style->white_gc,
-             0, 0, 0, 0, $self->{dw}, $self->{dh},
-            'normal', 0, 0);
-   } else {
-      $pm->draw_pixbuf ($self->style->white_gc,
-            $pb,
-            0, 0, 0, 0, $self->{dw}, $self->{dh},
-            "normal", 0, 0);
-   }
+   $pm->draw_pixbuf ($self->style->white_gc,
+                     $pb,
+                     0, 0, 0, 0, $self->{dw}, $self->{dh},
+                     "normal", 0, 0);
 
    $self->{window}->set_back_pixmap ($pm);
 
@@ -431,10 +529,10 @@ sub do_configure {
    $w = max (16, $w);
    $h = max (16, $h);
 
+   return if $self->{dw} == $w && $self->{dh} == $h;
+
    $self->{dw} = $w;
    $self->{dh} = $h;
-
-   return if $self->{dw} == $w && $self->{dh} == $h;
 
    $self->schedule_redraw;
 }

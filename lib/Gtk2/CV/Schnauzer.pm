@@ -1,3 +1,168 @@
+package Gtk2::CV::Schnauzer::Cluster;
+
+use Glib::Object::Subclass Gtk2::Window;
+
+use Gtk2::SimpleList;
+
+use Gtk2::CV::Progress;
+
+sub INIT_INSTANCE {
+   my ($self) = @_;
+
+   $self->set_default_size (250, 500);
+
+   $self->add (my $sw = new Gtk2::ScrolledWindow);
+   $sw->add (
+      $self->{list} = new Gtk2::SimpleList
+         "#"    => "int",
+         "Name" => "text",
+   );
+
+   $self->{list}->get_column (0)->set_sort_column_id (0);
+   $self->{list}->get_column (1)->set_sort_column_id (1);
+   $self->{list}->get_model->set_sort_column_id (0, 'descending');
+
+   $self->{list}->signal_connect (key_press_event => sub {
+      my $key = $_[1]->keyval;
+      my $state = $_[1]->state;
+
+      my $ctrl = grep $_ eq "control-mask", @{$_[1]->state};
+
+      if ($key == $Gtk2::Gdk::Keysyms{Up}) {
+         return 0;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Down}) {
+         return 0;
+      } else {
+         return $self->{schnauzer}->signal_emit (key_press_event => $_[1]);
+      }
+
+      1
+   });
+
+   $self->{list}->signal_connect (cursor_changed => sub {
+      my $row = scalar +($_[0]->get_selection->get_selected_rows)[0]->get_indices;
+
+      my $k = $_[0]{data}[$row][1];
+      $k = $self->{cluster}{$k};
+
+      local $self->{updating} = 1;
+      $self->{schnauzer}->set_paths ($k);
+
+      1
+   });
+
+   $self->signal_connect (destroy => sub {
+      if ($self->{signal}) {
+         $self->{schnauzer}->signal_handler_disconnect (delete $self->{signal});
+      }
+
+      if ($self->{paths}) {
+         $self->{schnauzer}->set_paths (delete $self->{paths});
+      } else {
+         $self->{schnauzer}->set_dir (delete $self->{dir});
+      }
+
+      %{$_[0]} = ()
+   });
+}
+
+sub clusterize {
+   my ($self, $files, $regex) = @_;
+
+   \%cluster
+}
+
+sub analyse {
+   my ($self) = @_;
+
+   my $paths = $self->{schnauzer}->get_paths;
+
+   # remember state
+   if (exists $self->{schnauzer}{dir}) {
+      $self->{dir} = $self->{schnauzer}{dir};
+      delete $self->{paths};
+   } else {
+      delete $self->{dir};
+      $self->{paths} = $paths;
+   }
+
+   my $progress = new Gtk2::CV::Progress;
+
+   $self->{_paths} = $paths;
+   $self->{select} = [$paths];
+
+   my %files = map {
+                      my $orig = $_;
+                      s/.*\///;
+                      s/(?:-\d+|\.~[~0-9]*)+$//; # remove -000, .~1~ etc.
+                      s/\.[^\.]+$//g;
+                      s/\.[^.]*//;
+                      ($orig => [/(\pL(?:\pL+|\pP(?=\pL))* | \pN+)/gx])
+                   }
+                   grep !/\.(sfv|crc|par|par2)$/i,
+                        @{ $self->{select}[-1] };
+
+   my $cluster = ();
+
+   $progress->update (0.25);
+
+   for my $regex (
+      qr/^\PN/,
+      qr/^\pN/,
+   ) {
+      my %c;
+      while (my ($k, $v) = each %files) {
+         my $idx = 100000;
+         # clusterise by component_idx . component
+         push @{ $c{$idx++ . $_} }, $k
+            for grep m/$regex/, @$v;
+      }
+
+      $cluster = { %c, %$cluster };
+
+      for (grep @{ $c{$_} } >= 3, keys %c) {
+         delete $files{$_} for @{ $c{$_} };
+      }
+   }
+
+   $progress->update (0.5);
+
+   $cluster->{"100000REMAINING FILES"} = [keys %files];
+
+   # remove component index
+   my %clean;
+   while (my ($k, $v) = each %$cluster) {
+      $clean{substr $k, 6} = $v;
+   }
+   $self->{cluster} = \%clean;
+
+   $progress->update (0.75);
+
+   @{ $self->{list}{data} } = (
+      sort { $b->[0] <=> $a->[0] }
+         grep $_->[0] > 1,
+              map [(scalar @{ $self->{cluster}{$_} }), $_], keys %{ $self->{cluster} }
+   );
+}
+
+sub start {
+   my ($self, $schnauzer) = @_;
+
+   $self->{schnauzer} = $schnauzer;
+
+   $self->{signal} = $schnauzer->signal_connect_after (chpaths => sub {
+      return if $self->{updating};
+
+      $self->analyse;
+
+      1
+   });
+
+   $self->analyse;
+
+   $self->show_all;
+}
+
 package Gtk2::CV::Schnauzer::DrawingArea;
 
 use Glib::Object::Subclass Gtk2::DrawingArea,
@@ -14,33 +179,48 @@ use Gtk2::Gdk::Keysyms;
 use Gtk2::CV;
 
 use Glib::Object::Subclass
-   Gtk2::HBox,
+   Gtk2::VBox,
    signals => {
-      activate => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
-      popup    => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar, Glib::String] },
+      activate          => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
+      popup             => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar, Gtk2::Gdk::Event] },
+      selection_changed => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
+      chpaths           => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
+      chdir             => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
    };
 
 use List::Util qw(min max);
 
 use File::Spec;
+use File::Copy;
+use File::Temp;
+use Cwd ();
 
-use POSIX qw(ceil ENOTDIR);
+use POSIX qw(ceil ENOTDIR _exit strftime);
+
+use IO::AIO;
 
 use strict;
 
 my $xvpics = ".xvpics";
 my $curdir = File::Spec->curdir;
-my $updir = File::Spec->updir;
+my $updir  = File::Spec->updir;
 
 sub IW() { 80 } # must be the same as in CV.xs(!)
 sub IH() { 60 }
-sub IX() { 30 }
+sub IX() { 20 }
 sub IY() { 16 }
-sub FY() { 11 } # font-y
+sub FY() { 12 } # font-y
 
-sub SCROLL_Y() { 1  }
-sub PAGE_Y()   { 20 }
+sub SCROLL_Y()    { 1  }
+sub PAGE_Y()      { 20 }
 sub SCROLL_TIME() { 150 }
+
+# entries are arrays in this format:
+# [0] dir
+# [1] file
+# [2] thumbnail file
+# [3] cached short filename
+# [4] Gtk2::Pixmap
 
 sub do_size_allocate_rounded {
    $_[1]->width  ($_[1]->width  / (IW + IX) * (IW + IX));
@@ -50,10 +230,16 @@ sub do_size_allocate_rounded {
 
 sub img {
    my $pb = Gtk2::CV::require_image $_[0];
-   (
-      scalar $pb->render_pixmap_and_mask (0.5),
-      $pb->get_width, $pb->get_height,
-   )
+
+   my $pm = scalar $pb->render_pixmap_and_mask (0.5);
+   my $w  = $pb->get_width;
+   my $h  = $pb->get_height;
+
+   [
+      $pm,
+      (IW - $w) * 0.5, (IH - $h) * 0.5,
+      $w, $h
+   ]
 }
 
 sub read_p7 {
@@ -100,8 +286,54 @@ sub gen_p7 {
    };
 }
 
-my @dir_img  = img "dir.png";
-my @file_img = img "file.png";
+my %ext_logo = (
+   jpeg => "jpeg",
+   jfif => "jpeg",
+   jpg  => "jpeg",
+   png  => "png",
+   gif  => "gif",
+
+   mpeg => "mpeg",
+   mpg  => "mpeg",
+   mpv  => "mpeg",
+   mpa  => "mpeg",
+   mpe  => "mpeg",
+   m1v  => "mpeg",
+   mp4  => "mpeg",
+   
+   mov  => "mov",
+   qt   => "mov",
+
+   avi  => "avi",
+   wmv  => "wmv",
+   asf  => "asf",
+
+   rm   => "rm",
+   ram  => "rm",
+
+   txt  => "txt",
+   csv  => "txt",
+   crc  => "txt",
+
+   mid  => "midi",
+   midi => "midi",
+
+   rar  => "rar",
+   zip  => "zip",
+   ace  => "ace",
+
+   par  => "par",
+   par2 => "par",
+);
+
+my $dir_img  = img "dir.png";
+my $file_img = img "file.png";
+
+my %file_img = do {
+   my %logo = reverse %ext_logo;
+
+   map +($_ => img "file-$_.png"), keys %logo;
+};
 
 sub coord {
    my ($self, $event) = @_;
@@ -119,18 +351,27 @@ sub coord {
 
 sub INIT_INSTANCE {
    my ($self) = @_;
-
-   $self->{cols} = 1; # just pretend, simplifies code a lot
-   $self->{page} = 1;
-   $self->{offs} = 0;
+ 
+   $self->{cols}  = 1; # just pretend, simplifies code a lot
+   $self->{page}  = 1;
+   $self->{offs}  = 0;
+   $self->{entry} = [];
 
    $self->push_composite_child;
 
+   $self->pack_start (my $hbox = new Gtk2::HBox, 1, 1, 0);
+   $self->pack_start (new Gtk2::HSeparator, 0, 0, 0);
+   $self->pack_end   (my $labelwindow = new Gtk2::EventBox, 0, 1, 0);
+   $labelwindow->add ($self->{info} = new Gtk2::Label);
+   $labelwindow->signal_connect_after (size_request => sub { $_[1]->width (0) });
+   # the above 3 lines are just to make the text clip to the window *sigh*
+   $self->{info}->set (selectable => 1, xalign => 0, justify => "left");
+
    $self->signal_connect (destroy => sub { %{$_[0]} = () });
 
-   $self->pack_start ($self->{draw}   = new Gtk2::CV::Schnauzer::DrawingArea, 1, 1, 0);
-   $self->pack_end   ($self->{scroll} = new Gtk2::VScrollbar , 0, 0, 0);
-   
+   $hbox->pack_start ($self->{draw}   = new Gtk2::CV::Schnauzer::DrawingArea, 1, 1, 0);
+   $hbox->pack_end   ($self->{scroll} = new Gtk2::VScrollbar , 0, 0, 0);
+
    $self->{adj} = $self->{scroll}->get ("adjustment");
 
    $self->{adj}->signal_connect (value_changed => sub {
@@ -145,7 +386,7 @@ sub INIT_INSTANCE {
                if ($diff > 0) {
                   $self->{window}->scroll (0, $diff * (IH + IY));
                } else {
-                  $self->{window}->scroll (0, $diff * (IH +IY));
+                  $self->{window}->scroll (0, $diff * (IH + IY));
                }
                $self->{window}->process_all_updates;
             } else {
@@ -191,6 +432,26 @@ sub INIT_INSTANCE {
       $self->expose ($_[1]);
    });
 
+   $self->{draw}->signal_connect (scroll_event => sub {
+      my $dir = $_[1]->direction;
+
+      if ($dir eq "down") {
+         my $value = $self->{adj}->value + $self->{page};
+         $self->{adj}->set_value ($value <= $self->{maxrow} ? $value : $self->{maxrow});
+         $self->clear_cursor;
+
+      } elsif ($dir eq "up") {
+         my $value = $self->{adj}->value;
+         $self->{adj}->set_value ($value >= $self->{page} ? $value - $self->{page} : 0);
+         $self->clear_cursor;
+         
+      } else {
+         return 0;
+      }
+
+      return 1;
+   });
+
    $self->{draw}->signal_connect (button_press_event => sub {
       my ($x, $y) = $self->coord ($_[1]); 
       my $cursor = $x + $y * $self->{cols};
@@ -212,6 +473,8 @@ sub INIT_INSTANCE {
                delete $self->{sel}{$cursor};
                delete $self->{sel_x1};
 
+               $self->emit_sel_changed;
+
                $self->invalidate (
                   (($cursor - $self->{offs}) % $self->{cols},
                    ($cursor - $self->{offs}) / $self->{cols}) x 2
@@ -223,10 +486,11 @@ sub INIT_INSTANCE {
                $self->selrect;
             }
          } elsif ($_[1]->button == 3) {
-            $self->emit_popup ($_[1], $cursor);
+            $self->emit_popup ($_[1],
+                               $cursor < @{$self->{entry}} ? $cursor : undef);
          }
       } elsif ($_[1]->type eq "2button-press") { 
-         $self->emit_activate ($cursor);
+         $self->emit_activate ($cursor) if $cursor < @{$self->{entry}};
       }
       1;
    });
@@ -287,14 +551,15 @@ sub INIT_INSTANCE {
       1;
    });
 
-   $self->{draw}->signal_connect (key_press_event => sub { $self->handle_key ($_[1]->keyval, $_[1]->state) });
-
    # unnecessary redraws...
    $self->{draw}->signal_connect (focus_in_event  => sub { 1 });
    $self->{draw}->signal_connect (focus_out_event => sub { 1 });
 
-   $self->{draw}->add_events ([qw(key_press_mask button_press_mask button_release_mask button-motion-mask)]);
+   $self->{draw}->add_events ([qw(button_press_mask button_release_mask button-motion-mask scroll_mask)]);
    $self->{draw}->can_focus (1);
+
+   $self->signal_connect (key_press_event => sub { $self->handle_key ($_[1]->keyval, $_[1]->state) });
+   $self->add_events ([qw(key_press_mask key_release_mask)]);
 
    $self->push_composite_child;
 }
@@ -311,31 +576,64 @@ sub set_geometry_hints {
    $window->set_geometry_hints ($self->{draw}, $hints, [qw(base-size resize-inc)]);
 }
 
+sub emit_sel_changed {
+   my ($self) = @_;
+
+   my $sel = $self->{sel};
+
+   if (!$sel || !%$sel) {
+      $self->{info}->set_text ("");
+   } elsif (1 < scalar %$sel) {
+      $self->{info}->set_text (sprintf "%d entries selected", scalar %$sel);
+   } else {
+      my $entry = $self->{entry}[(keys %$sel)[0]];
+
+      my $id = ++$self->{aio_sel_changed};
+
+      aio_stat "$entry->[0]/$entry->[1]", sub {
+         return unless $id == $self->{aio_sel_changed};
+         $self->{info}->set_text (
+            sprintf "%s: %d bytes, last modified %s (in %s)",
+                    $entry->[1],
+                    -s _,
+                    (strftime "%Y-%m-%d %H:%M:%S", localtime +(stat _)[9]),
+                    $entry->[0],
+         );
+      };
+   }
+
+   $self->signal_emit (selection_changed => $self->{sel});
+}
+
 sub emit_popup {
    my ($self, $event, $cursor) = @_;
 
-   my $entry = $self->{entry}[$cursor];
-   my $path = "$entry->[0]/$entry->[1]";
+#   my $entry = $self->{entry}[$cursor];
+#   my $path = "$entry->[0]/$entry->[1]";
 
-   $self->{cursor_current} = 1;
+   # TODO: set cursor to under-pointer if no selection
+   if (!$self->cursor_valid && defined $cursor) {
+      $self->{cursor} = $cursor;
+      $self->cursor_move (0);
+   }
 
-#                print "right clicked!\n";
-#                # here i create a menu by hand....
-#                my $menu = Gtk2::Menu->new;
-#                foreach (qw/ one two red blue /) {
-#                        my $item = Gtk2::MenuItem->new ("$_ fish");
-#                        $item->show;
-#                        $menu->append ($item);
-#                        $item->signal_connect (activate => sub {
-#                                        print "@_ (fish)\n";
-#                                }, $_);
-#                }
-#                 
-#                # and pop it up.
-#                $menu->popup (undef, undef, undef, undef,
-#                              $event->button, $event->time);
+   my $menu = new Gtk2::Menu;
 
-   $self->signal_emit (popup => $event, $path);
+   if (exists $self->{dir}) {
+      $menu->append (my $i_up = new Gtk2::MenuItem "Up...");
+      $i_up->signal_connect (activate => sub {
+         $self->set_dir ($self->{dir} . "/" . $updir);
+      });
+   }
+
+   $menu->append (my $i_up = new Gtk2::MenuItem "Filename clustering...");
+   $i_up->signal_connect (activate => sub {
+      Gtk2::CV::Schnauzer::Cluster->new->start ($self);
+   });
+
+   $self->signal_emit (popup => $menu, $cursor, $event);
+   $_->show_all for $menu->get_children;
+   $menu->popup (undef, undef, undef, undef, $event->button, $event->time);
 }
 
 sub emit_activate {
@@ -383,6 +681,7 @@ sub cursor_valid {
 
    defined $cursor
         && $self->{sel}{$cursor}
+        && $cursor < @{$self->{entry}}
         && $cursor >= $self->{offs}
         && $cursor < $self->{offs} + $self->{page} * $self->{cols};
 }
@@ -398,9 +697,7 @@ sub cursor_move {
       my $oldcursor = $cursor;
       
       $cursor += $inc;
-
-      $cursor -= $inc if $cursor < 0;
-      $cursor -= $inc if $cursor >= @{$self->{entry}};
+      $cursor -= $inc if $cursor < 0 || $cursor >= @{$self->{entry}};
 
       if ($cursor < $self->{offs}) {
          $self->{adj}->set_value ($self->{row} - 1);
@@ -413,21 +710,27 @@ sub cursor_move {
           ($oldcursor - $self->{offs}) / $self->{cols}) x 2
       );
    } else {
+      $cursor = $self->{cursor};
+
       $self->clear_selection;
 
-      if ($inc < 0) {
-         $cursor = $self->{offs} + $self->{page} * $self->{cols} - 1;
-      } else {
-         $cursor = $self->{offs};
-         $cursor++ while $cursor < $#{$self->{entry}}
-                         && -d "$self->{entry}[$cursor][0]/$self->{entry}[$cursor][1]/.";
+      if (!$cursor) {
+         if ($inc < 0) {
+            $cursor = $self->{offs} + $self->{page} * $self->{cols} - 1;
+         } else {
+            $cursor = $self->{offs};
+            $cursor++ while $cursor < $#{$self->{entry}}
+                            && -d "$self->{entry}[$cursor][0]/$self->{entry}[$cursor][1]/.";
 
-         $self->make_visible ($cursor);
+            $self->make_visible ($cursor);
+         }
       }
-      
    }
+
    $self->{cursor} = $cursor;
    $self->{sel}{$cursor} = $self->{entry}[$cursor];
+
+   $self->emit_sel_changed;
 
    $self->invalidate (
       (($cursor - $self->{offs}) % $self->{cols},
@@ -439,7 +742,10 @@ sub clear_cursor {
    my ($self) = @_;
 
    if (defined (my $cursor = delete $self->{cursor})) {
-      delete $self->{sek}{$cursor};
+      delete $self->{sel}{$cursor};
+      $self->emit_sel_changed;
+
+      $self->draw_entry ($cursor);
    }
 }
 
@@ -449,12 +755,21 @@ sub clear_selection {
    delete $self->{cursor};
 
    $self->draw_entry ($_) for keys %{delete $self->{sel} || {}};
+
+   $self->emit_sel_changed;
 }
 
 sub get_selection {
    my ($self) = @_;
 
    $self->{sel};
+}
+
+# execute jobs asynchronously, one day
+sub job {
+   my ($job, $finish) = @_;
+   $job->();
+   $finish->();
 }
 
 sub generate_thumbnail {
@@ -464,15 +779,26 @@ sub generate_thumbnail {
       || $self->{entry}[$idx]
       || return;
 
-   $self->make_visible ($idx);
+   my $generation = $self->{generation};
 
-   mkdir "$entry->[0]/$xvpics", 0777;
-   gen_p7 $entry;
+   job sub {
+      mkdir "$entry->[0]/$xvpics", 0777;
+      gen_p7 $entry;
 
-   $self->draw_entry ($idx);
+   }, sub {
+      $self->{generation} == $generation
+         or return;
 
-   $self->{window}->process_all_updates;
-   Glib::MainContext->iteration (0);
+      $self->make_visible ($idx);
+
+      $self->draw_entry ($idx);
+
+      $self->emit_sel_changed;
+
+      $self->{window}->process_all_updates;
+#   Gtk2::Gdk->flush;
+#   Glib::MainContext->iteration (0);
+   };
 }
 
 sub update_thumbnail {
@@ -484,6 +810,7 @@ sub update_thumbnail {
        > (stat "$entry->[0]/.xvpics/$entry->[1]")[9]) {
       $self->generate_thumbnail ($idx)
    } elsif (delete $self->{sel}{$idx}) {
+      $self->emit_sel_changed;
       $self->draw_entry ($idx);
    }
 }
@@ -493,29 +820,42 @@ sub handle_key {
 
    if ($state * "control-mask") {
       if ($key == $Gtk2::Gdk::Keysyms{g}) {
-         $self->generate_thumbnail ($_)
-            for sort { $a <=> $b } keys %{$self->get_selection};
+         my @sel = keys %{$self->get_selection};
+         my $progress = new Gtk2::CV::Progress work => scalar @sel;
+         $self->generate_thumbnail ($_), $progress->increment
+            for sort { $a <=> $b } @sel;
 
+      } elsif ($key == $Gtk2::Gdk::Keysyms{a}) {
+         $self->select_all;
       } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
          $self->rescan;
-
       } elsif ($key == $Gtk2::Gdk::Keysyms{d}) {
-         if (my @sel = values %{$self->get_selection}) {
-            for (@sel) {
-               unlink "$_->[0]/$_->[1]";
-               unlink "$_->[0]/.xvpics/$_->[1]";
-            }
-            $self->rescan;
-         }
-
-      } elsif ($key == $Gtk2::Gdk::Keysyms{u}) {
-         if (%{$self->get_selection}) {
-            $self->update_thumbnail ($_)
-               for sort { $a <=> $b } keys %{$self->get_selection};
+         $self->delsel;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{l}) {
+         if (scalar (keys %{$self->{sel}}) > 1) {
+           $self->histsort_selected;
          } else {
-            $self->update_thumbnail ($_)
+           $self->histsort_all;
+         }
+         $self->emit_sel_changed;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{u}) {
+         my @sel = keys %{ $self->get_selection || {} };
+         if (@sel) {
+            my $progress = new Gtk2::CV::Progress work => scalar @sel;
+            $self->update_thumbnail ($_), $progress->increment
+               for sort { $a <=> $b } @sel;
+         } else {
+            my $progress = new Gtk2::CV::Progress work => scalar @{$self->{entry}};
+            $self->update_thumbnail ($_), $progress->increment
                for 0 .. $#{$self->{entry}};
          }
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
+         $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
+         $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
+      } elsif ($key == $Gtk2::Gdk::Keysyms{BackSpace}) {
+         $self->cursor_move (-1);
+         $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
 
       } else {
          return 0;
@@ -551,10 +891,10 @@ sub handle_key {
          $self->emit_activate ($self->{cursor});
       } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
          $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
-         $self->emit_activate ($self->{cursor});
+         $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
       } elsif ($key == $Gtk2::Gdk::Keysyms{BackSpace}) {
          $self->cursor_move (-1);
-         $self->emit_activate ($self->{cursor});
+         $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
 
       } elsif (($key >= ord('0') && $key <= ord('9'))
                || ($key >= ord('a') && $key <= ord('z'))) {
@@ -576,6 +916,7 @@ sub handle_key {
             $self->{cursor} = $cursor;
 
             $self->{adj}->set_value (min $self->{maxrow}, $cursor / $self->{cols});
+            $self->emit_sel_changed;
             $self->invalidate (0, 0, $self->{cols} - 1, $self->{page} - 1);
          }
       } else {
@@ -593,6 +934,275 @@ sub invalidate {
       $x1 * (IW + IX), $y1 * (IH + IY),
       ($x2 - $x1) * (IW + IX) + (IW + IX), ($y2 - $y1) * (IH + IY) + (IH + IY),
    );
+}
+
+sub histsort_all {
+   my ($self) = @_;
+
+   my $pics = [];
+   my @idx;
+
+   for (0..$#{$self->{entry}}) {
+      my $r = pixme ($self->{entry}->[$_]);
+
+      if (defined $r) {
+         push @$pics, $r;
+         push @idx, $_;
+      }
+   }
+
+   #print "<(@idx)\n";
+   my $sorted_idxs = sort_similar_pics (\@idx, $pics);
+   #print ">(@$sorted_idxs)\n";
+
+   my $entrys = $self->{entry};
+   $self->{entry} = [];
+
+   for (@$sorted_idxs) {
+     push @{$self->{entry}}, $entrys->[$_];
+     delete $entrys->[$_];
+   }
+
+   for (grep defined, @$entrys) {
+     push @{$self->{entry}}, $_;
+   }
+
+   $self->invalidate (0, 0, $self->{cols} - 1, $self->{page} - 1);
+}
+
+sub histsort_selected {
+   my ($self) = @_;
+
+   my $sel = $self->{sel};
+
+   my @idx = sort { $a <=> $b } keys %$sel;
+   my $pics = [];
+   my @oi;
+
+   for my $i (@idx) {
+     my $r = pixme ($self->{entry}->[$i]);
+ 
+     if (defined $r) {
+       push @$pics, $self->{entry}->[$i];
+       push @oi, $i;
+     }
+   }
+   @idx = @oi;
+
+   my $first_idx = (sort { $a <=> $b } @idx)[0];
+
+   #print "<(@idx)\n";
+
+   my $sorted_idxs = sort_similar_pics (\@idx, $pics);
+
+   #print ">(@$sorted_idxs)\n";
+
+   my $entrys = $self->{entry};
+   $self->{entry} = [];
+   
+   for (my $i = 0; $i < $first_idx; ++$i) {
+     $self->{entry}->[$i] = $entrys->[$i];
+     delete $entrys->[$i];
+   }
+
+   %$sel = ();
+   
+   for (@$sorted_idxs) {
+     push @{$self->{entry}}, $entrys->[$_];
+     $sel->{$_} = 1;
+     delete $entrys->[$_];
+   }
+
+   for (grep defined, @$entrys) {
+     push @{$self->{entry}}, $_;
+   }
+
+   $self->invalidate (0, 0, $self->{cols} - 1, $self->{page} - 1);
+}
+
+#sub histsort_all {
+#   my ($self) = @_;
+#
+#   my @idx;
+#   my $pics = [];
+#   my $sel = $self->{sel};
+#
+#   if (scalar (keys %$sel) > 1) {
+#      @idx = keys %$sel;
+#      my @oi;
+#
+#      for my $i (@idx) {
+#        my $r = pixme ($self->{entry}->[$i]);
+#
+#        if (defined $r) {
+#          push @$pics, $self->{entry}->[$i];
+#          push @oi, $i;
+#        }
+#      }
+#      @idx = @oi;
+#      %$sel = ();
+#   } else {
+#}
+
+sub sort_similar_pics {
+   my ($idx, $hists) = @_;
+
+   my $hists = make_histogram $hists;
+
+   my ($fh, $datafile) = File::Temp::tempfile;
+      for (0 .. $#$idx) {
+         print $fh "$idx->[$_]\t" . (join "\t", unpack "f*", $hists->[$_]) . "\n";
+      }
+   close $fh;
+
+   my ($fh, $rfile) = File::Temp::tempfile;
+      print $fh <<EOF;
+         library(cluster)
+         data <- read.table(file="$datafile", sep="\\t", row.names = 1)
+         res <- agnes(data, diss=FALSE, metric = "euclidean")
+         write.table(res\$order.lab, file="$datafile", sep="\\t", quote=FALSE, col.names = FALSE,row.names = FALSE)
+EOF
+   close $fh;
+
+   system "R CMD BATCH --slave --vanilla $rfile /dev/null";
+
+   unlink $rfile;
+
+   open my $fh, "<", $datafile
+      or die "$datafile: $!";
+   $idx = [ do { local $/; split /\n/, <$fh> } ];
+
+   unlink $datafile;
+   
+   return $idx;
+
+   my @outidx;
+   my $last_idx  = shift @$idx; 
+   my $last_hist = shift @$hists;
+
+   push @outidx, $last_idx;
+
+   #print "sorting ...\n";
+
+   while (@$hists) {
+      my $i = find_similar ($last_hist, @$hists);
+      
+      push @outidx, $idx->[$i];
+      
+      $last_hist = splice (@$hists, $i, 1);
+      $last_idx  = splice (@$idx,   $i, 1);
+   }
+
+   #print "finished\n";
+
+   return [ @outidx ];
+}
+
+sub find_similar {
+   my ($hist, @hists) = @_;
+ 
+   no integer;
+
+   my $i = 0;
+   my $sim;
+   my $min = 1E38; 
+   my $minidx = 0;
+   
+   for (@hists) {
+      my $r = compare ($hist, $_);
+      if ($r < $min) {
+         $min = $r;
+         $minidx = $i;
+      }
+      $i++;
+   }
+ 
+   return $minidx;
+}
+
+sub compare {
+   my ($hist1, $hist2) = @_;
+
+   my @a = unpack "C*", $hist1;
+   my @b = unpack "C*", $hist2;
+
+   my $c;
+   for (0..$#a) {
+     $c += ($a[$_] - $b[$_]) ** 2;
+   }
+
+   return $c;
+}
+
+sub pixme {
+   my ($entry) = @_;
+   my $str;
+
+   return undef if not defined $entry;
+  
+   if (defined $entry->[2]) {
+      return $entry->[2]->[2];
+    
+   } else {
+      return undef
+         unless defined $entry->[4];
+      return undef 
+         unless defined $entry->[4]->[0];
+
+      my $pb = Gtk2::Gdk::Pixbuf::get_from_drawable (undef, $entry->[4]->[0], undef, 0, 0, 0, 0, -1, -1);
+      return $pb->get_pixels;
+   }
+}
+
+sub select_all {
+   my ($self) = @_;
+
+   for (0 .. $#{$self->{entry}}) {
+      $self->{sel}{$_} = $self->{entry}[$_];
+      $self->draw_entry ($_);
+   }
+
+   $self->emit_sel_changed;
+}
+
+# remove a file, or move it to the unlink directory
+sub remove_file {
+   my ($prefix, $path) = @_;
+
+   if (exists $ENV{CV_TRASHCAN}) {
+      require File::Copy;
+
+      mkdir "$ENV{CV_TRASHCAN}/$1" if $path =~ /^(.*)\//s;
+
+      File::Copy::move "$prefix/$path", "$ENV{CV_TRASHCAN}/$path"
+   } else {
+      unlink "$prefix/$path"
+   }
+}
+
+sub delsel {
+   my ($self) = @_;
+
+   my $sel = delete $self->{sel};
+   my @idx = sort { $a <=> $b } keys %$sel;
+
+   my $progress = new Gtk2::CV::Progress work => scalar @idx;
+
+   for (reverse @idx) {
+      my $e = $self->{entry}[$_];
+      remove_file $e->[0], "$e->[1]"
+         or (! -e "$e->[0]/$e->[1]")
+         or next;
+      remove_file $e->[0], ".xvpics/$e->[1]";
+      $self->{cursor}-- if $self->{cursor} > $_;
+      splice @{$self->{entry}}, $_, 1, ();
+
+      $progress->increment;
+   }
+
+   $self->setadj;
+   $self->emit_sel_changed;
+   $self->{window}->invalidate_rect (new Gtk2::Gdk::Rectangle (0, 0, $self->{window}->get_size), 1);
 }
 
 sub selrect {
@@ -632,6 +1242,7 @@ sub selrect {
       }
    }
 
+   $self->emit_sel_changed;
    for my $idx (keys %{$self->{sel}}) {
       $self->draw_entry ($idx) if !exists $prev->{$idx};
    }
@@ -643,20 +1254,27 @@ sub selrect {
 sub setadj {
    my ($self) = @_;
 
+   no integer;
+
    $self->{rows} = ceil @{$self->{entry}} / $self->{cols};
+   $self->{maxrow} = $self->{rows} - $self->{page};
 
    $self->{adj}->step_increment (1);
    $self->{adj}->page_size      ($self->{page});
    $self->{adj}->page_increment ($self->{page});
    $self->{adj}->lower          (0);
-   $self->{adj}->upper          ($self->{rows} + 1);
+   $self->{adj}->upper          ($self->{rows});
 
    $self->{adj}->changed;
 
-   $self->{maxrow} = $self->{rows} - $self->{page} + 1;
-
    $self->{adj}->set_value ($self->{maxrow})
       if $self->{row} > $self->{maxrow};
+}
+
+# filename => extension
+sub extension {
+   $_[0] =~ /\.([a-z0-9]{3,4})[\.\-_0-9~]*$/i
+      ? lc $1 : ();
 }
 
 sub expose {
@@ -682,14 +1300,10 @@ sub expose {
    my $context = $self->get_pango_context;
    my $font = $context->get_font_description;
 
-   # pango is SOOO extremely broken. the formula below doesn't even work...
-   # because there is NO PORTABLE WAY TO SET THE FONT SIZE IN PIXELS
-   #$font->set_size (FY * $self->{window}->get_screen->get_height_mm / $self->{window}->get_screen->get_height
-   #                    * (72.27 / 25.4) * Gtk2::Pango->scale);
-   $font->set_size (FY * 1/96 * 72.27 * Gtk2::Pango->scale);
+   $font->set_absolute_size (FY * Gtk2::Pango->scale);
 
    my $layout = new Gtk2::Pango::Layout $context;
-   my $maxwidth = IW + IX - IY * 0.25;
+   my $maxwidth = IW + IX - IY * 0.1;
    my $idx = $self->{offs} + 0;
 
 outer:
@@ -709,18 +1323,13 @@ outer:
                $text_gc = $self->style->black_gc;
             }
 
-            # pre-render into pixmap
+            # pre-render thumbnail into pixmap
             $entry->[4] ||= do {
                my ($pm, $w, $h);
-               if ($entry->[2]) {
-                  my $pb = &p7_to_pb(@{delete $entry->[2]});
-                  $pm = $pb->render_pixmap_and_mask (0.5);
-                  ($w, $h) = ($pb->get_width, $pb->get_height);
-               } else {
-                  ($pm, $w, $h) = -e "$entry->[0]/$entry->[1]/."
-                                  ? @dir_img
-                                  : @file_img;
-               }
+
+               my $pb = &p7_to_pb(@{delete $entry->[2]});
+               $pm = $pb->render_pixmap_and_mask (0.5);
+               ($w, $h) = ($pb->get_width, $pb->get_height);
 
                $entry->[4] = [
                   $pm,
@@ -729,6 +1338,8 @@ outer:
                ];
             };
 
+            #use Data::Dumper;
+            #print "F:".Dumper($entry)."\n";
             $self->{window}->draw_drawable ($self->style->white_gc,
                      $entry->[4][0],
                      0, 0,
@@ -750,13 +1361,13 @@ outer:
 
                $name =~ s/\..{3,4}$//;
 
-               substr $name, 0.5 * ((length $name) - $d), $d, "\x{2026}";
+               substr $name, 0.8 * ((length $name) - $d), $d, "\x{2026}";
 
                while () {
                   $layout->set_text ($name);
                   ($w, $h) = $layout->get_pixel_size;
                   last if $w < $maxwidth;
-                  substr $name, 0.5 * length $name, 2, "\x{2026}";
+                  substr $name, 0.8 * length $name, 2, "\x{2026}";
                   
                }
 
@@ -777,92 +1388,139 @@ outer:
 sub rescan {
    my ($self) = @_;
 
-   $self->set_paths ([map "$_->[0]/$_->[1]", @{$self->{entry}}]);
+   $self->do_chpaths ($self->get_paths);
 }
 
-sub set_paths {
+sub do_chpaths {
    my ($self, $paths) = @_;
+
+   my $base = $self->{dir};
 
    delete $self->{cursor};
    delete $self->{sel};
    delete $self->{entry};
 
-   my (@d, @f);
-   my ($dir, $file);
+   $self->{generation}++;
 
-   $paths = [
-               sort { $a->[2] cmp $b->[2] }
-                    map {
-                           if ($_ =~ /^(.*)\/([^\/]*)$/s) {
-                              ($dir, $file) = ($1, $2);
-                           } else {
-                              ($dir, $file) = ($curdir, $_);
-                           }
-                           (my $key = lc $file) =~ s/(\d{1,5})/sprintf "%05d", $1/ge;
-                           [$dir, $file, $key]
-                        }
-                        @$paths
-            ];
+   $self->emit_sel_changed;
+
+   my (@d, @f);
+
+   my %exclude = ($curdir => 0, $updir => 0, $xvpics => 0);
+
+   my %xvpics;
+
+   if (defined $base) {
+      if (opendir my $fh, "$base/$xvpics") {
+         $xvpics{$_}++ while defined ($_ = readdir $fh);
+      }
+   }
+
+   my $progress = new Gtk2::CV::Progress work => scalar @$paths;
 
    for (@$paths) {
-      ($dir, $file, undef) = @$_;
+      my ($dir, $file);
 
-      my $entry = [$dir, $file];
-
-      if ($file eq $curdir || $file eq $xvpics) {
-         # skip
-      } elsif ($file eq $updir) {
-         $entry->[3] = "<parent>";
-         unshift @d, $entry;
-      } elsif ($entry->[2] = read_p7 "$dir/$xvpics/$file") {
-         push @f, $entry;
+      if ($_ =~ /^(.*)\/([^\/]*)$/s) {
+         ($dir, $file) = ($1, $2);
       } else {
-         # this is faster than a normal stat
-         if (stat "$dir/$file/.") {
-            push @d, $entry;
-         } elsif ($! == ENOTDIR) {
-            push @f, $entry;
-         } else {
-            # does not exist
-         }
+         ($dir, $file) = ($curdir, $_);
       }
+      
+      if (exists $exclude{$file}) {
+         # ignore
+         $progress->increment;
+      } elsif ($base eq $dir ? exists $xvpics{$file} : -r "$dir/$xvpics/$file") {
+         delete $xvpics{$file};
+         push @f, [$dir, $file, read_p7 "$dir/$xvpics/$file"];
+         $progress->increment;
+      } else {
+         # this is faster than a normal stat on many modern filesystems
+         aio_stat "$dir/$file/.", sub {
+            if (!$_[0]) { # no error
+               push @d, [$dir, $file, undef, undef,
+                         $dir_img];
+            } elsif ($! == ENOTDIR) {
+               push @f, [$dir, $file, undef, undef,
+                         $file_img{ $ext_logo{ extension $file } }
+                            || $file_img];
+            } else {
+               # does not exist
+               # ELOOP => symlink pointing niwhere
+               # ENOENT => entry does not even exist
+            }
+            $progress->increment;
+         };
+      }
+   }
+
+   IO::AIO::poll while $progress->inprogress;
+
+   for (\@d, \@f) {
+      @$_ = map $_->[1],
+                 sort { $a->[0] cmp $b->[0] }
+                    map {
+                           (my $key = lc $_->[1]) =~ s/(\d{1,8})/sprintf "%08d", $1/ge;
+                           [$key, $_]
+                        }
+                       @$_;
    }
 
    $self->{entry} = [@d, @f];
 
+   $self->{adj}->set_value (0);
    $self->setadj;
 
    $self->{draw}->queue_draw;
+
+   # remove extraneous .xvpics files (but only after an extra check)
+   my $outstanding = scalar keys %xvpics;
+
+   for my $file (keys %xvpics) {
+      aio_stat "$self->{dir}/$file", sub {
+         rmdir "$base/$xvpics" unless --$outstanding; # try to remove the dir at the end
+
+         return if !$_[0] || -d _;
+
+         aio_unlink "$self->{dir}/$xvpics/$file";
+      }
+   }
+}
+
+sub set_paths {
+   my ($self, $paths) = @_;
+
+   delete $self->{dir};
+   $self->signal_emit (chpaths => $paths);
+}
+
+sub do_chdir {
+   my ($self, $dir) = @_;
+
+   $dir = Cwd::abs_path $dir;
+
+   opendir my $fh, $dir
+      or die "$dir: $!";
+
+   $self->{dir} = $dir;
+   $self->signal_emit (chpaths => [map "$dir/" . Glib::filename_to_unicode $_, readdir $fh]);
 }
 
 sub set_dir {
    my ($self, $dir) = @_;
 
-   $dir = File::Spec->canonpath ($dir);
-
-   opendir my $fh, $dir
-      or die "$dir: $!";
-
-   $self->set_paths ([map "$dir/" . Glib::filename_to_unicode $_, readdir $fh]);
+   $self->signal_emit (chdir => $dir);
 }
 
-sub add_idle {
-   my ($self, @jobs) = @_;
+sub get_paths {
+   my ($self) = @_;
 
-   push @{$self->{idle}}, @jobs;
-
-   $self->{idle_id} ||= add Glib::Idle sub {
-      if (my $job = shift @{$self->{idle}}) {
-         $job->($self);
-         1;
-      } else {
-         delete $self->{idle_id};
-         0;
-      }
-   };
+   [ map "$_->[0]/$_->[1]", @{$self->{entry}} ]
 }
 
 sub do_activate {
+   # nop
 }
 
-1;
+1
+

@@ -1,3 +1,34 @@
+TODO/FIXME: popup menu doesn't cause refresh (or maybe only internal refresh)
+TODO/FIXME: pixmap-bg-trick sometimes doesn't work (race?)
+TODO/FIXME: cursor movement does not clear selection
+TODO/FIXME: insensitize schnauzer while progress active.
+
+0.5  Mon Jul 11 05:48:13 CEST 2005
+        - image window resizing now works again.
+        - much improved resize/move handling (still not up to xv's level).
+        - every schnauzer now has an associated label/info field.
+        - better ^D performance.
+        - can now play videos if mplayer is in the path (and probably is
+          identical to my versions and your config file is empty etc. etc.
+          the usual caveats about embedding mplayer...)
+          (http://itdp.fh-biergarten.de/mplayer-dev-eng/2004-12/txt00028.txt fixes
+           the resize problems).
+        - remove gtk20-compatibility cruft.
+        - added progress window for lengthy operations.
+        - removed <parent> entry, use popup=>Up.
+        - change of contact address.
+        - updated logos for some file-extensions.
+        - make cv's info label wrap as not to change horizontal window width
+          (doesn't work, but that's general gtk2 brokenness).
+        - use set_absolute_size for the schnauzer font. doesn't result in an
+          absolute size, but at least results in the same height everywhere.
+        - implemented a primitive plugin system (see Gtk2::CV::Plugin and
+          eg/plugin-skeleton).
+        - removed bin/cvc's clusteriser.
+        - added a new clusteriser algorithm, use Popup=>"Filename clustering..."
+        - set _X_CWD to current dir in bin/cv (a rather special feature...).
+        - further directory scanning speed improvements.
+        - IO::AIO use for some speedups and more concurrency.
 
 0.3  Sun Aug  1 21:59:49 CEST 2004
 	- cv * now correctly loads && selects the first image again.

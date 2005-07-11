@@ -29,6 +29,20 @@ DESCRIPTION
      ctrl-s  rescan visual schnauzer files for updates/deletes etc.
      ctrl-e  run an editor ($CV_EDITOR or "gimp") on the current image.
 
+    And when playing movies, these additional keys are active:
+
+     left    rewind by 10 seconds
+     right   forward by 10 seconds
+     down    rewind by 60 seconds
+     up      forward by 60 seconds
+     pg_up   rewind by 600 seconds
+     pg_down forward by 600 seconds
+     o       toggle on-screen display
+     p       pause/unpause
+     escape  stop playing
+     9       turn volume down
+     0       turn volume up
+
     The following keys are redirected to the default visual schnauzer
     window:
 
@@ -51,10 +65,20 @@ DESCRIPTION
      ctrl-d      delete selected files WITHOUT ASKING AGAIN
      ctrl-g      generate icons for the selected files
      ctrl-u      update selected (or all) icons if neccessary
+     ctrl-a      select all files
 
 ENVIRONMENT
+    CV_EDITOR
+        The program that gets executed when the user presses "CTRL-e" in the
+        Schnauzer or image window. The default is "gimp".
+
     CV_PRINT_DESTINATION
         The default (perl-style) destination to use in the print dialog.
+
+    CV_TRASHCAN
+        When set, must point to a directory where all files that are deleted
+        are moved to. If unset, files that are deleted are really being
+        deleted.
 
 SECURITY CONSIDERATIONS
     CV uses Pixbuf to load images. Pixbuf is not considered safe for this
