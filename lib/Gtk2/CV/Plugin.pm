@@ -24,10 +24,12 @@ package Gtk2::CV::Plugin;
 my %registry;
 
 sub import {
+   my ($self) = @_;
+
+   return unless $self eq Gtk2::CV::Plugin::;
+
    my $caller = caller;
-
    $registry{$caller}++;
-
    push @{"$caller\::ISA"}, __PACKAGE__;
 }
 
@@ -64,12 +66,12 @@ sub new_imagewindow {
 sub new_schnauzer {
 }
 
-1;
-
 =head1 AUTHOR
 
  Marc Lehmann <schmorp@schmorp.de>
  http://home.schmorp.de/
 
 =cut
+
+1
 

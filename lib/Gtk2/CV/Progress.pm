@@ -1,11 +1,36 @@
+=head1 NAME
+
+Gtk2::CV::Progress - a simple progress widget
+
+=head1 SYNOPSIS
+
+  use Gtk2::CV::ImageWindow;
+
+=head1 DESCRIPTION
+
+=head2 METHODS
+
+=over 4
+
+=cut
+
 package Gtk2::CV::Progress;
 
 use Gtk2;
+use Gtk2::CV;
 
 use Time::HiRes 'time';
 
-sub INITIAL  (){ 0.5 } # initial popup delay
-sub INTERVAL (){ 0.2 } # minimum update interval
+sub INITIAL   (){ 0.50 } # initial popup delay
+sub INTERVAL1 (){ 0.05 } # minimum update interval
+sub INTERVAL2 (){ 0.15 } # minimum update interval
+
+=item new Gtk2::CV::Progress ...
+
+ title => the progress widget title (mandatory)
+ work  => amount of work (default 1)
+
+=cut
 
 sub new {
    my $class = shift;
@@ -14,11 +39,17 @@ sub new {
       @_,
    }, $class;
 
-   $self->{work} ||= 1;
+   $self->{work} = 1 unless defined $self->{work};
    $self->{next} = time + INITIAL;
 
    $self
 }
+
+=item $progress->update ($work)
+
+The amount of work already done.
+
+=cut
 
 sub update {
    my ($self, $progress) = @_;
@@ -26,7 +57,7 @@ sub update {
    my $now = time;
 
    if ($now > $self->{next}) {
-      $self->{next} = $now + INTERVAL;
+      Gtk2::CV::disable_aio;
 
       if (!$self->{window}) {
          $self->{window} = new Gtk2::Window 'toplevel';
@@ -38,13 +69,18 @@ sub update {
             default_width   => 200,
             default_height  => 30,
          );
-         $self->{window}->add ($self->{bar} = new Gtk2::ProgressBar);
+         $self->{window}->add (my $vbox = new Gtk2::VBox);
+         $vbox->add ($self->{label} = new Gtk2::Label $self->{title}) if exists $self->{title};
+         $vbox->add ($self->{bar} = new Gtk2::ProgressBar);
 
          $self->{window}->signal_connect (delete_event => sub { $_[0]->hide; 1 });
 
          $self->{window}->show_all;
-         $self->{window}->realize;
-         Gtk2->main_iteration_do (1) while !$self->{window}->window->is_viewable;
+         $self->{window}->show_now;
+
+         $self->{next} = $now + INTERVAL1;
+      } else {
+         $self->{next} = $now + INTERVAL2;
       }
 
       $self->{bar}->set_fraction ($progress / $self->{work});
@@ -56,14 +92,49 @@ sub update {
       }
 
       Gtk2->main_iteration while Gtk2->events_pending;
+
+      Gtk2::CV::enable_aio;
    }
 }
+
+=item $progress->increment
+
+Increment the progress value by the given amount (default: 1).
+
+=cut
 
 sub increment {
    my ($self, $inc) = @_;
 
-   $self->update ($self->{cur} += $inc || 1);
+   if (($self->{cur} += $inc || 1) >= $self->{work}) {
+      delete $self->{next};
+   }
+
+   $self->update ($self->{cur});
 }
+
+=item $progress->set_title ($title)
+
+Change the title to the given string.
+
+=cut
+
+sub set_title {
+   my ($self, $title) = @_;
+
+   $self->{title} = $title;
+
+   if ($self->{window}) {
+      $self->{label}->set_text ($title);
+      Gtk2->main_iteration while Gtk2->events_pending;
+   }
+}
+
+=item $progress->inprogress
+
+Return true as long as the current progress is less than the work value.
+
+=cut
 
 sub inprogress {
    my ($self) = @_;
@@ -76,6 +147,14 @@ sub DESTROY {
 
    $self->{window}->destroy if $self->{window};
 }
+
+=back
+
+=head1 AUTHOR
+
+Marc Lehmann <schmorp@schmorp.de>
+
+=cut
 
 1
 

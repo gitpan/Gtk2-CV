@@ -2,18 +2,70 @@
 #include "perl.h"
 #include "XSUB.h"
 
+#include <string.h>
+#include <setjmp.h>
+
+#include <jpeglib.h>
+#include <glib.h>
+#include <gtk/gtk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
 #include <gperl.h>
 #include <gtk2perl.h>
 
-#define IW 80
+#define IW 80 /* MUST match Schnauer.pm! */
+#define IH 60 /* MUST match Schnauer.pm! */
 
 #define RAND (seed = (seed + 7141) * 54773 % 134456)
 
 #define LINELENGTH 240
 
 #define ELLIPSIS "\xe2\x80\xa6"
+
+struct jpg_err_mgr
+{
+  struct jpeg_error_mgr err;
+  jmp_buf setjmp_buffer;
+};
+
+static void
+cv_error_exit (j_common_ptr cinfo)
+{
+  longjmp (((struct jpg_err_mgr *)cinfo->err)->setjmp_buffer, 99);
+}
+
+static void
+cv_error_output (j_common_ptr cinfo)
+{
+  return;
+}
+
+static void
+rgb_to_hsv (unsigned int  r, unsigned int  g, unsigned int  b,
+            unsigned int *h, unsigned int *s, unsigned int *v)
+{
+  unsigned int mx = r; if (g > mx) mx = g; if (b > mx) mx = b;
+  unsigned int mn = r; if (g < mn) mn = g; if (b < mn) mn = b;
+  unsigned int delta = mx - mn;
+
+  *v = mx;
+
+  *s = mx ? delta * 255 / mx : 0;
+
+  if (delta == 0)
+    *h = 0;
+  else
+    {
+      if (r == mx)
+        *h = ((int)g - (int)b) * 255 / (int)(delta * 3);
+      else if (g == mx)
+        *h = ((int)b - (int)r) * 255 / (int)(delta * 3) + 52;
+      else if (b == mx)
+        *h = ((int)r - (int)g) * 255 / (int)(delta * 3) + 103;
+
+      *h &= 255;
+    }
+}
 
 static guint32 a85_val;
 static guint a85_cnt;
@@ -70,41 +122,27 @@ a85_finish (PerlIO *fp)
   PerlIO_write (fp, a85_buf, a85_ptr - a85_buf);
 }
 
-static void
-rgb_to_hsv (unsigned int  r, unsigned int  g, unsigned int  b,
-            unsigned int *h, unsigned int *s, unsigned int *v)
-{
-  unsigned int mx = r; if (g > mx) mx = g; if (b > mx) mx = b;
-  unsigned int mn = r; if (g < mn) mn = g; if (b < mn) mn = b;
-  unsigned int delta = mx - mn;
-
-  *v = mx;
-
-  *s = mx ? delta * 255 / mx : 0;
-
-  if (delta == 0)
-    *h = 0;
-  else
-    {
-      if (r == mx)
-        *h = ((int)g - (int)b) * 255 / (int)(delta * 3);
-      else if (g == mx)
-        *h = ((int)b - (int)r) * 255 / (int)(delta * 3) + 52;
-      else if (b == mx)
-        *h = ((int)r - (int)g) * 255 / (int)(delta * 3) + 103;
-
-      *h &= 255;
-    }
-}
-
 /////////////////////////////////////////////////////////////////////////////
 
 MODULE = Gtk2::CV PACKAGE = Gtk2::CV
 
 PROTOTYPES: ENABLE
 
+# missing in Gtk2 perl module
+
+gboolean
+gdk_net_wm_supports (GdkAtom property)
+	CODE:
+#if defined(GDK_WINDOWING_X11) && !defined(GDK_MULTIHEAD_SAFE)
+        RETVAL = gdk_net_wm_supports (property);
+#else
+        RETVAL = 0;
+#endif
+        OUTPUT:
+        RETVAL
+
 GdkPixbuf_noinc *
-transpose (GdkPixbuf *pb)
+dealpha_expose (GdkPixbuf *pb)
 	CODE:
 {
 	int w = gdk_pixbuf_get_width (pb);
@@ -114,39 +152,125 @@ transpose (GdkPixbuf *pb)
         guchar *src = gdk_pixbuf_get_pixels (pb), *dst;
         int sstr = gdk_pixbuf_get_rowstride (pb), dstr;
 
-	RETVAL = gdk_pixbuf_new (GDK_COLORSPACE_RGB, bpp == 4, 8, h, w);
+	RETVAL = gdk_pixbuf_new (GDK_COLORSPACE_RGB, 0, 8, w, h);
 
         dst = gdk_pixbuf_get_pixels (RETVAL);
         dstr = gdk_pixbuf_get_rowstride (RETVAL);
 
-        for (y = 0; y < h; y++)
-          for (x = 0; x < w; x++)
-            for (i = 0; i < bpp; i++)
-              dst[y * bpp + x * dstr + i] = src[x * bpp + y * sstr + i];
+        for (x = 0; x < w; x++)
+          for (y = 0; y < h; y++)
+            for (i = 0; i < 3; i++)
+              dst[x * 3 + y * dstr + i] = src[x * bpp + y * sstr + i];
 }
 	OUTPUT:
         RETVAL
 
 GdkPixbuf_noinc *
-flop (GdkPixbuf *pb)
+rotate (GdkPixbuf *pb, int angle)
+	CODE:
+        RETVAL = gdk_pixbuf_rotate_simple (pb, angle ==   0 ? GDK_PIXBUF_ROTATE_NONE
+                                             : angle ==  90 ? GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE
+                                             : angle == 180 ? GDK_PIXBUF_ROTATE_UPSIDEDOWN
+                                             : angle == 270 ? GDK_PIXBUF_ROTATE_CLOCKWISE
+                                             : angle);
+	OUTPUT:
+        RETVAL
+
+GdkPixbuf_noinc *
+load_jpeg (SV *path, int thumbnail=0)
 	CODE:
 {
-	int w = gdk_pixbuf_get_width (pb);
-        int h = gdk_pixbuf_get_height (pb);
-        int bpp = gdk_pixbuf_get_n_channels (pb);
-        int x, y, i;
-        guchar *src = gdk_pixbuf_get_pixels (pb), *dst;
-        int sstr = gdk_pixbuf_get_rowstride (pb), dstr;
+        struct jpeg_decompress_struct cinfo;
+        struct jpg_err_mgr jerr;
+        guchar *data;
+        int rs;
+        FILE *fp;
+        volatile GdkPixbuf *pb = 0;
+        gchar *filename;
 
-	RETVAL = gdk_pixbuf_new (GDK_COLORSPACE_RGB, bpp == 4, 8, w, h);
+        RETVAL = 0;
 
-        dst = gdk_pixbuf_get_pixels (RETVAL);
-        dstr = gdk_pixbuf_get_rowstride (RETVAL);
+        filename = g_filename_from_utf8 (SvPVutf8_nolen (path), -1, 0, 0, 0);
+        fp = fopen (filename, "rb");
+        g_free (filename);
 
-        for (y = 0; y < h; y++)
-          for (x = 0; x < w; x++)
-            for (i = 0; i < bpp; i++)
-              dst[(w - 1 - x) * bpp + y * dstr + i] = src[x * bpp + y * sstr + i];
+        if (!fp)
+          XSRETURN_UNDEF;
+
+        cinfo.err = jpeg_std_error (&jerr.err);
+
+        jerr.err.error_exit     = cv_error_exit;
+        jerr.err.output_message = cv_error_output;
+
+        if ((rs = setjmp (jerr.setjmp_buffer)))
+          {
+            fclose (fp);
+            jpeg_destroy_decompress (&cinfo);
+
+            if (pb)
+              g_object_unref ((gpointer)pb);
+
+            XSRETURN_UNDEF;
+          }
+
+        jpeg_create_decompress (&cinfo);
+
+        jpeg_stdio_src (&cinfo, fp);
+        jpeg_read_header (&cinfo, TRUE);
+
+        cinfo.dct_method          = JDCT_DEFAULT;
+        cinfo.do_fancy_upsampling = FALSE; /* worse quality, but nobody compained so far, and gdk-pixbuf does the same */
+        cinfo.do_block_smoothing  = FALSE;
+        cinfo.out_color_space     = JCS_RGB;
+        cinfo.quantize_colors     = FALSE;
+
+        cinfo.scale_num   = 1;
+        cinfo.scale_denom = 1;
+
+        jpeg_calc_output_dimensions (&cinfo);
+
+        if (thumbnail)
+          {
+            cinfo.dct_method          = JDCT_FASTEST;
+            cinfo.do_fancy_upsampling = FALSE;
+
+            while (cinfo.scale_denom < 8
+                   && cinfo.output_width  >= IW*4
+                   && cinfo.output_height >= IH*4)
+              {
+                cinfo.scale_denom <<= 1;
+                jpeg_calc_output_dimensions (&cinfo);
+              }
+          }
+
+	pb = RETVAL = gdk_pixbuf_new (GDK_COLORSPACE_RGB, 0, 8,  cinfo.output_width, cinfo.output_height);
+        if (!RETVAL)
+          longjmp (jerr.setjmp_buffer, 2);
+
+        data = gdk_pixbuf_get_pixels (RETVAL);
+        rs = gdk_pixbuf_get_rowstride (RETVAL);
+
+        if (cinfo.output_components != 3)
+          longjmp (jerr.setjmp_buffer, 3);
+
+        jpeg_start_decompress (&cinfo);
+
+        while (cinfo.output_scanline < cinfo.output_height)
+          {
+            int remaining = cinfo.output_height - cinfo.output_scanline;
+            JSAMPROW rp[4];
+
+            rp [0] = data + cinfo.output_scanline * rs;
+            rp [1] = (guchar *)rp [0] + rs;
+            rp [2] = (guchar *)rp [1] + rs;
+            rp [3] = (guchar *)rp [2] + rs;
+
+            jpeg_read_scanlines (&cinfo, rp, remaining < 4 ? remaining : 4);
+          }
+
+        jpeg_finish_decompress (&cinfo);
+        fclose (fp);
+        jpeg_destroy_decompress (&cinfo);
 }
 	OUTPUT:
         RETVAL
@@ -155,13 +279,57 @@ flop (GdkPixbuf *pb)
 
 MODULE = Gtk2::CV PACKAGE = Gtk2::CV::Schnauzer
 
+SV *
+foldcase (SV *pathsv)
+	PROTOTYPE: $
+	CODE:
+{
+	STRLEN plen;
+        U8 *path = (U8 *)SvPVutf8 (pathsv, plen);
+        U8 *pend = path + plen;
+        U8 dst [plen * 6 * 3], *dstp = dst;
+
+        while (path < pend)
+          {
+            U8 ch = *path;
+
+            if (ch >= 'a' && ch <= 'z')
+              *dstp++ = *path++;
+            else if (ch >= '0' && ch <= '9')
+              {
+                STRLEN el, nl = 0;
+                while (*path >= '0' && *path <= '9' && path < pend)
+                  path++, nl++;
+
+                for (el = nl; el < 6; el++)
+                  *dstp++ = '0';
+
+                memcpy (dstp, path - nl, nl);
+                dstp += nl;
+              }
+            else
+              {
+                STRLEN cl;
+                to_utf8_fold (path, dstp, &cl);
+                dstp += cl;
+                path += is_utf8_char (path);
+              }
+          }
+
+        RETVAL = newSVpvn ((const char *)dst, dstp - dst);
+}
+	OUTPUT:
+        RETVAL
+
 GdkPixbuf_noinc *
-p7_to_pb (int w, int h, guchar *src)
+p7_to_pb (int w, int h, SV *src_sv)
+        PROTOTYPE: @
 	CODE:
 {
 	int x, y;
         guchar *dst, *d;
         int dstr;
+        guchar *src = (guchar *)SvPVbyte_nolen (src_sv);
 
 	RETVAL = gdk_pixbuf_new (GDK_COLORSPACE_RGB, 0, 8,  w, h);
         dst = gdk_pixbuf_get_pixels (RETVAL);
@@ -179,120 +347,6 @@ p7_to_pb (int w, int h, guchar *src)
 }
 	OUTPUT:
         RETVAL
-
-SV *
-pb_to_p7 (GdkPixbuf *pb)
-	CODE:
-{
-	int w = gdk_pixbuf_get_width  (pb);
-	int h = gdk_pixbuf_get_height (pb);
-	int x, y;
-        guchar *dst;
-        int bpp = gdk_pixbuf_get_n_channels (pb);
-        guchar *src = gdk_pixbuf_get_pixels (pb);
-        int sstr = gdk_pixbuf_get_rowstride (pb);
-        int Er[IW], Eg[IW], Eb[IW];
-        int seed = 77;
-
-	RETVAL = newSV (w * h);
-        SvPOK_only (RETVAL);
-        SvCUR_set (RETVAL, w * h);
-
-        dst = SvPVX (RETVAL);
-
-        memset (Er, 0, sizeof (int) * IW);
-        memset (Eg, 0, sizeof (int) * IW);
-        memset (Eb, 0, sizeof (int) * IW);
-
-        /* some primitive error distribution + random dithering */
-
-        for (y = 0; y < h; y++)
-          {
-            int er = 0, eg = 0, eb = 0;
-
-            for (x = 0; x < w; x++)
-              {
-                int r, g, b;
-                guchar *p = src + x * bpp + y * sstr;
-
-                r = ((p[0] + er + Er[x]) * 7 + 128) / 255;
-                g = ((p[1] + eg + Eg[x]) * 7 + 128) / 255;
-                b = ((p[2] + eb + Eb[x]) * 3 + 128) / 255;
-
-                r = r > 7 ? 7 : r < 0 ? 0 : r;
-                g = g > 7 ? 7 : g < 0 ? 0 : g;
-                b = b > 3 ? 3 : b < 0 ? 0 : b;
-
-                er += p[0] - (r * 255 + 4) / 7;
-                eg += p[1] - (g * 255 + 4) / 7;
-                eb += p[2] - (b * 255 + 2) / 3;
-
-                Er[x] = er / 2; er -= er / 2 + RAND % 7 - 3;
-                Eg[x] = eg / 2; eg -= eg / 2 + RAND % 7 - 3;
-                Eb[x] = eb / 2; eb -= eb / 2 + RAND % 7 - 3;
-
-                *dst++ = r << 5 | g << 2 | b;
-              }
-          }
-}
-	OUTPUT:
-        RETVAL
-
-SV *
-make_histogram (SV *ar)
-        CODE:
-{
-        int i;
-        AV *av, *result;
-
-        if (!SvROK (ar) || SvTYPE (SvRV (ar)) != SVt_PVAV)
-          croak ("Not an array ref as first argument to make_histogram");
-
-        av = (AV *) SvRV (ar);
-        result = newAV ();
-
-        for (i = 0; i <= av_len (av); ++i)
-          {
-            const int HISTSIZE = 64;
-
-            int j;
-            SV *sv = *av_fetch (av, i, 1);
-            STRLEN len;
-            char *buf = SvPVbyte (sv, len);
-
-            int tmphist[HISTSIZE];
-            float *hist;
-
-            SV *histsv = newSV (HISTSIZE * sizeof (float) + 1);
-            SvPOK_on (histsv);
-            SvCUR_set (histsv, HISTSIZE * sizeof (float));
-            hist = (float *)SvPVX (histsv);
-
-            Zero (tmphist, sizeof (tmphist), char);
-
-            for (j = len; j--; )
-              {
-                unsigned int idx
-                    = ((*buf & 0xc0) >> 2)
-                    | ((*buf & 0x18) >> 1)
-                    |  (*buf & 0x03);
-
-                ++tmphist[idx];
-                ++buf;
-              }
-            
-            for (j = 0; j < HISTSIZE; ++j)
-              hist[j] = (float)tmphist[j] / (len + 1e-30);
-
-            av_push (result, histsv);
-          }
-
-        RETVAL = newRV_noinc ((SV *)result);
-}
-        OUTPUT:
-        RETVAL
-
-
 
 #############################################################################
 
@@ -358,7 +412,7 @@ pb_to_hv84 (GdkPixbuf *pb)
         SvPOK_only (RETVAL);
         SvCUR_set (RETVAL, 6 * 8 * 12 / 8);
 
-        dst = SvPVX (RETVAL);
+        dst = (guchar *)SvPVX (RETVAL);
 
         /* some primitive error distribution + random dithering */
 
@@ -426,5 +480,62 @@ hv84_to_av (unsigned char *hv84)
 	OUTPUT:
         RETVAL
 
+#############################################################################
+
+MODULE = Gtk2::CV PACKAGE = Gtk2::CV::Plugin::RCluster
+
+SV *
+make_histograms (SV *ar)
+        CODE:
+{
+        int i;
+        AV *av, *result;
+
+        if (!SvROK (ar) || SvTYPE (SvRV (ar)) != SVt_PVAV)
+          croak ("Not an array ref as first argument to make_histogram");
+
+        av = (AV *) SvRV (ar);
+        result = newAV ();
+
+        for (i = 0; i <= av_len (av); ++i)
+          {
+            const int HISTSIZE = 64;
+
+            int j;
+            SV *sv = *av_fetch (av, i, 1);
+            STRLEN len;
+            char *buf = SvPVbyte (sv, len);
+
+            int tmphist[HISTSIZE];
+            float *hist;
+
+            SV *histsv = newSV (HISTSIZE * sizeof (float) + 1);
+            SvPOK_on (histsv);
+            SvCUR_set (histsv, HISTSIZE * sizeof (float));
+            hist = (float *)SvPVX (histsv);
+
+            Zero (tmphist, sizeof (tmphist), char);
+
+            for (j = len; j--; )
+              {
+                unsigned int idx
+                    = ((*buf & 0xc0) >> 2)
+                    | ((*buf & 0x18) >> 1)
+                    |  (*buf & 0x03);
+
+                ++tmphist[idx];
+                ++buf;
+              }
+            
+            for (j = 0; j < HISTSIZE; ++j)
+              hist[j] = (float)tmphist[j] / (len + 1e-30);
+
+            av_push (result, histsv);
+          }
+
+        RETVAL = newRV_noinc ((SV *)result);
+}
+        OUTPUT:
+        RETVAL
 
 

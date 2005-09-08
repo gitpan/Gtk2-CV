@@ -6,17 +6,22 @@ use Encode ();
 use Gtk2 -init;
 use Gtk2::Gdk::Keysyms;
 
+use Gtk2::CV;
+
 use Gtk2::CV::ImageWindow;
 use Gtk2::CV::Schnauzer;
 
-use Gtk2::CV;
+BEGIN {
+   require Gtk2::CV::Plugin;
+   require "$ENV{HOME}/.cvrc" if -r "$ENV{HOME}/.cvrc";
+}
+
+use Gtk2::CV::Plugin::NameCluster;
+use Gtk2::CV::Plugin::RCluster;
 
 Gtk2::Rc->parse (Gtk2::CV::find_rcfile "gtkrc");
 
 use File::Spec;
-
-require Gtk2::CV::Plugin;
-require "$ENV{HOME}/.cvrc" if -r "$ENV{HOME}/.cvrc";
 
 my $mainwin;
 my $viewer;
@@ -37,23 +42,10 @@ sub new_schnauzer {
       $info->set_label ($label);
       $viewer->load_image ($_[1]);
    });
-   $s->signal_connect (chdir => sub {
-      my ($self, $dir) = @_;
-
-      my $path = Cwd::abs_path $dir;
-
-      $self->realize;
-      $self->window->property_change (
-         Gtk2::Gdk::Atom->intern ("_X_CWD", 0),
-         Gtk2::Gdk::Atom->intern ("UTF8_STRING", 0),
-         Gtk2::Gdk::CHARS, 'replace',
-         Encode::encode_utf8 $path,
-      );
-   });
 
    Gtk2::CV::Plugin->call (new_schnauzer => $s);
 
-   $s;
+   $s
 }
 
 sub std_keys {
@@ -112,7 +104,7 @@ sub std_keys {
       $mainwin->visible
          ? $mainwin->hide
          : $mainwin->show_all;
-      1;
+      1
    });
 
    Gtk2::CV::Plugin->call (new_imagewindow => $viewer);
@@ -122,26 +114,29 @@ sub std_keys {
    $mainwin = new Gtk2::Window;
    $mainwin->set_title ("CV");
    $mainwin->add (my $vbox = new Gtk2::VBox);
-   $mainwin->signal_connect (delete_event => sub { $mainwin->hide; 1; });
+   $mainwin->signal_connect (delete_event => sub { $mainwin->hide; 1 });
 
    $vbox->add ($schnauzer);
    $vbox->pack_end (my $frame = new Gtk2::Frame, 0, 0, 0);
    $frame->add (my $hbox = new Gtk2::HBox 0, 0);
-   $hbox->pack_start ((new Gtk2::Label "Info"), 0, 0, 0);
-   $hbox->pack_start (($info = new Gtk2::Label), 1, 1, 0);
-   $info->set (wrap => 1);
+   $hbox->pack_start ((new Gtk2::Label "Info: "), 0, 0, 0);
+   $hbox->pack_end   (my $labelwindow = new Gtk2::EventBox, 1, 1, 0);
+   $labelwindow->add ($info = new Gtk2::Label);
+   $labelwindow->signal_connect_after (size_request => sub { $_[1]->width (0); 0 });
+   $info->set (selectable => 1, xalign => 0, justify => "left");
 
    $schnauzer->set_geometry_hints;
 }
 
 if (@ARGV) {
-   $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV]);
+   @ARGV == 1 && -d $ARGV[0]
+      ? $schnauzer->set_dir (Glib::filename_to_unicode shift)
+      : $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV]);
    $schnauzer->show_all;
    $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
 } else {
    $schnauzer->set_dir (File::Spec->curdir);
    $mainwin->show_all;
-   $viewer->show_all;
 }
 
 $viewer->show_all;
@@ -152,76 +147,194 @@ __DATA__
 
 =head1 NAME
 
-cv - a fast gtk+ image viewer modeled after xv
+cv - a fast gtk+ image viewer loosely modeled after XV
 
 =head1 SYNOPSIS
 
    cv [file...]
 
-=head1 DESCRIPTION
+=head1 FEATURES
 
-None yet.
+CV is supposed to work similar to the venerable XV image viewer, just
+faster. Why faster?
+
+=over 4
+
+=item * optimized directory scanning algorithm
+
+The directory scanning in CV uses some tricks that - on most modern
+filesystems - makes it possible to detect filetypes faster than stat()'ing
+every file. This makes CV suitable for directories with lots of files
+(10000+).
+
+This algorithm is quite unprecise - it doesn't make a difference between
+files, device nodes, symlinks and the like, and filetype detection is done
+using the file extension only.
+
+On the positive side, it is usually many orders of magnitude faster than
+traditional scanning techniques (good for directories with 10000 or
+100000+ files).
+
+=item * queuing for all time-consuming background tasks
+
+All tasks, such as unlinking files or generating thumbnails, that can be
+done in the background will be done so - no waiting required, even when
+changing directories.
+
+=item * use of asynchronous I/O
+
+CV tries to use asynchronous I/O whereever it makes sense, for example
+while scanning directories, waiting for stat data, unlinking files or
+generating thumbnails. This usually decreases scanning times for large
+directories a bit (especially on RAID devices and over NFS) and makes CV
+much more interactive.
+
+=item * fast image loading
+
+The time span between the user issuing a command and displaying the new
+image should be as small as possible. CV uses optimized (especially
+for JPEG) loading functions and sacrifices some quality (e.g no gamma
+correction, although this might change) to achieve this speed.
+
+=item * fast thumbnail creation
+
+Thumbnail creation uses both CPU and Disk-I/O. CV interleaves both, so
+on modern CPUs, thumbnailing is usually limited by I/O speed. Thumbnail
+creation for JPEGs has been specially optimized and can even take
+advantage of multiple CPUs.
+
+=item * minimum optical clutter
+
+CV has no menus or other user interface elements that take up a lot of
+screen space (or are useful for beginning users). The schnauzer windows
+can also be somewhat crowded.
+
+The point of an image viewer is viewing images, not a nice GUI. This is
+similar to XV's behaviour.
+
+=item * efficient (and hard to learn) user interface
+
+CV uses key combinations. A lot. If you are an experienced XV user, you
+will find most of these keys familiar. If not, CV might be hard to use at
+first, but will be an efficient tool later.
+
+=item * multi-window GUI
+
+CV doesn't force you to use a specific layout, instead it relies on your
+window manager, thus enabling you to chose whatever layout that suits you
+most.
+
+=item * i18n'ed filename handling throughout
+
+As long as glib can recognize your filename encoding (either UTF-8 or
+locale-specific, depending on the setting of G_BROKEN_FILENAMES) and you
+have the relevant fonts, CV will display your filenames correctly.
+
+=item * extensible through plug-ins
+
+I have weird plug-ins that access remote databases to find a
+directory. This is not likely to be of any use to other people. Likewise,
+others might have weird requirements I cannot dream of.
+
+=item * filename clustering
+
+Among the standard plug-ins is a filename clustering plug-in, that (in
+case of tens of thousands images in one directory) might be able to
+cluster similar names together.
+
+=back
+
+=head1 DESCRIPTION
 
 =head2 THE IMAGE WINDOW
 
 You can use the following keys in the image window:
 
- q       quit the program
- <       half the image size
- >       double the image size
- ,       shrink the image by 10%
- .       enlarge the image by 10%
- n       reset to normal size
- m       maximize to screensize
- M       maxime to screensize, respecting image aspect
- ctrl-m  toggle maxpect-always mode
- u       uncrop
- r       set scaling mode to 'nearest' (fastest)
- s       set scaling mode to 'bilinear' (default)
- S       set scaling mode to 'hyper' (slowest)
- t       rotate clockwise 90°
- T       rotate counterclockwise°
- ctrl-v  open a new visual schnauzer window for the current dir
- ctrl-s  rescan visual schnauzer files for updates/deletes etc.
- ctrl-e  run an editor ($CV_EDITOR or "gimp") on the current image.
+ q            quit the program
+ <            half the image size
+ >            double the image size
+ ,            shrink the image by 10%
+ .            enlarge the image by 10%
+ n            reset to normal size
+ m            maximize to screensize
+ M            maximize to screensize, respecting image aspect
+ ctrl-m       toggle maxpect-always mode
+ u            uncrop
+ r            set scaling mode to 'nearest' (fastest)
+ s            set scaling mode to 'bilinear' (default)
+ shift-s      set scaling mode to 'hyper' (slowest)
+ t            rotate clockwise 90°
+ T            rotate counterclockwise°
+ ctrl-v       open a new visual schnauzer window for the current dir
+ ctrl-e       run an editor ($CV_EDITOR or "gimp") on the current image
+ ctrl-p       fire up the print fialog
+ escape       cancel a crop action
 
 And when playing movies, these additional keys are active:
 
- left    rewind by 10 seconds
- right   forward by 10 seconds
- down    rewind by 60 seconds
- up      forward by 60 seconds
- pg_up   rewind by 600 seconds
- pg_down forward by 600 seconds
- o       toggle on-screen display
- p       pause/unpause
- escape  stop playing
- 9       turn volume down
- 0       turn volume up
+ left         rewind by 10 seconds
+ right        forward by 10 seconds
+ down         rewind by 60 seconds
+ up           forward by 60 seconds
+ pg_up        rewind by 600 seconds
+ pg_down      forward by 600 seconds
+ o            toggle on-screen display
+ p            pause/unpause
+ escape       stop playing
+ 9            turn volume down
+ 0            turn volume up
 
-The following keys are redirected to the default visual schnauzer window:
+Any other keys will be sent to the default schnauzer window, which can be
+toggled on and off by right-clicking into the image window.
 
- space     next image
- backspace last image
+Left-clicking into the image window will let you crop the image (usually
+to zoom into large images that CV scales down).
 
 =head2 THE VISUAL SCHNAUZER
 
 You can use the following keys in the schnauzer window:
 
- space       move to and display next image
- backspace   move to and display previous image
- return      display selected picture
+ ctrl-space,
+ space        move to and display next image
+ ctrl-backspace,
+ backspace    move to and display previous image
+ ctrl-return,
+ return       display selected picture, or enter directory
 
- cursor keys move selection
- page-up     move one page up
- page-down   move one page down
- home        move to first file
- end         move to last file
+ cursor keys  move selection
+ page-up      move one page up
+ page-down    move one page down
+ home         move to first file
+ end          move to last file
 
- ctrl-d      delete selected files WITHOUT ASKING AGAIN
- ctrl-g      generate icons for the selected files
- ctrl-u      update selected (or all) icons if neccessary
- ctrl-a      select all files
+ ctrl-a       select all files
+ ctrl-shift-a select all files currently displayed in the schnauzer window
+ ctrl-d       delete selected files WITHOUT ASKING AGAIN
+ ctrl-g       force generation of thumbnais for the selected files
+ ctrl-s       rescan current direcory or files updates/deletes etc.
+ ctrl-u       update selected (or all) icons if neccessary
+ ctrl-l       don't use, will become a plug-in eventually
+
+ ^            go to parent directory (caret).
+
+ 0-9,
+ a-z          find the first filename beginning with this letter
+
+Right-clicking into the schnauzer window displays a pop-up menu with
+additional actions.
+
+=head1 FILES
+
+When starting, CV runs the F<.cvrc> file in your F<$HOME> directory as if
+it were a perl script. in that, you will mostly load plug-ins.
+
+Example:
+
+   system "fping -q -t 10 ether"
+     or require "/fs/cv/cvplugin.pl";
+
+This will load a plug-in, but only if the machine I<ether> is reachable
+(supposedly the plug-in is networked in some way :).
 
 =head1 ENVIRONMENT
 
@@ -245,8 +358,8 @@ moved to. If unset, files that are deleted are really being deleted.
 
 =head1 SECURITY CONSIDERATIONS
 
-CV uses Pixbuf to load images. Pixbuf is not considered safe for this
-purpose, though (from the gtk-2.2 release notes):
+CV uses Pixbuf to load non-JPEG images. Pixbuf is not considered safe for
+this purpose, though (from the gtk-2.2 release notes):
 
 "While efforts have been made to make gdk-pixbuf robust against invalid
 images, using gdk-pixbuf to load untrusted data is not recommended, due to
@@ -255,16 +368,15 @@ could cause gdk-pixbuf to crash or worse."
 
 =head1 BUGS/TODO
 
- Pixbuf doesn't honor G_BROKEN_FILENAMES, so accessing files with names
- incompatible with utf-8 fails.
+ Lots of functionality is missing.
+
+ Pixbuf doesn't always honor G_BROKEN_FILENAMES, so accessing files with
+ names incompatible with utf-8 might fail.
 
  rotate on disk
- print
  lots of ui issues
  save(?)
  preferences
- ctrl-u in schnauzer
- shift-cursor in schnauzer
 
 =head1 AUTHOR
 

@@ -1,7 +1,41 @@
 TODO/FIXME: popup menu doesn't cause refresh (or maybe only internal refresh)
 TODO/FIXME: pixmap-bg-trick sometimes doesn't work (race?)
 TODO/FIXME: cursor movement does not clear selection
-TODO/FIXME: insensitize schnauzer while progress active.
+
+1.0  Wed Sep  7 18:41:38 CEST 2005
+	- fix alpha handling: we now compose with a checkerboard,
+          but exposing hidden pixel data is also supported in the code.
+        - use jpg instead of P7 format for thumbnails and remove p7
+          write support: better quality, smaller filesize.
+        - evaluate _NET_FRAME_EXTENTS to get actual maximum screen size.
+        - better mplayer integration (resize handling, aspect handling).
+        - fix some bugs when a Schnauzer window was resized and got
+          the wrong offset.
+        - don't crash when trying to crop to a size of less than a pixel.
+        - schnauzer now has two modes: directors view or single-file view.
+          this changes it's behaviour on rescan and other occasions.
+        - reduce the amount of random dithering.
+        - load jpeg files ~20% faster, create jpeg thumbnails an order
+          of magnitude faster.
+        - improved bin/cv documentation.
+        - improve scanning performance further by usign the directory
+          link count and by stat'ing possible directories early.
+        - do file data prefetch after space or backspace and 0.3s.
+        - better and faster casefolding.
+        - use pango's ellipsise functionality and cut at the end.
+        - moved the R clustering algo to a separate plugin (and fix it).
+        - moved the filename clustering algo to a separate plugin.
+        - try very hard to get the window size correct befre first map.
+        - only load the default title image when necessary (saves mem & cpu).
+        - change drag xor colour to #808080, uglier, but visible on all
+          images.
+        - added icon for .tif files.
+        - updated icons for some file-extensions.
+        - created a job system and create thumbnails in parallel and
+          in the background.
+        - more careful handling of filename encodings.
+        - use gdk_pixbuf_rotate_simple instead of our own functions.
+	- played with resizing logic once more.
 
 0.5  Mon Jul 11 05:48:13 CEST 2005
         - image window resizing now works again.
@@ -17,7 +51,7 @@ TODO/FIXME: insensitize schnauzer while progress active.
         - added progress window for lengthy operations.
         - removed <parent> entry, use popup=>Up.
         - change of contact address.
-        - updated logos for some file-extensions.
+        - updated icons for some file-extensions.
         - make cv's info label wrap as not to change horizontal window width
           (doesn't work, but that's general gtk2 brokenness).
         - use set_absolute_size for the schnauzer font. doesn't result in an

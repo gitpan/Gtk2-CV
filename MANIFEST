@@ -8,7 +8,10 @@ lib/Gtk2/CV/Schnauzer.pm
 lib/Gtk2/CV/PostScript.pm
 lib/Gtk2/CV/PrintDialog.pm
 lib/Gtk2/CV/Plugin.pm
+lib/Gtk2/CV/Plugin/NameCluster.pm
+lib/Gtk2/CV/Plugin/RCluster.pm
 lib/Gtk2/CV/Progress.pm
+lib/Gtk2/CV/Jobber.pm
 
 eg/plugin-skeleton
 
@@ -19,6 +22,7 @@ cv.glade
 images/cv.png
 images/dir.png
 images/file.png
+images/error.png
 images/file-ace.png
 images/file-asf.png
 images/file-avi.png
@@ -33,6 +37,7 @@ images/file-par.png
 images/file-png.png
 images/file-rar.png
 images/file-rm.png
+images/file-tif.png
 images/file-txt.png
 images/file-wmv.png
 images/file-zip.png

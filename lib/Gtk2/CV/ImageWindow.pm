@@ -1,3 +1,19 @@
+=head1 NAME
+
+Gtk2::CV::ImageWindow - a window widget displaying an image or other media
+
+=head1 SYNOPSIS
+
+  use Gtk2::CV::ImageWindow;
+
+=head1 DESCRIPTION
+
+=head2 METHODS
+
+=over 4
+
+=cut
+
 package Gtk2::CV::ImageWindow;
 
 use Gtk2;
@@ -8,10 +24,11 @@ use Gtk2::CV::PrintDialog;
 
 use List::Util qw(min max);
 
+use Scalar::Util;
 use POSIX ();
 use FileHandle ();
 
-my $title_img = Gtk2::CV::require_image "cv.png";
+my $title_image;
 
 use Glib::Object::Subclass
    Gtk2::Window,
@@ -25,6 +42,10 @@ use Glib::Object::Subclass
       button_press_event   => sub { $_[0]->do_button_press (1, $_[1]) },
       button_release_event => sub { $_[0]->do_button_press (0, $_[1]) },
       motion_notify_event  => \&motion_notify_event,
+      show                 => sub {
+         $_[0]->realize_image;
+         $_[0]->signal_chain_from_overridden;
+      },
    };
 
 sub INIT_INSTANCE {
@@ -34,14 +55,25 @@ sub INIT_INSTANCE {
 
    $self->double_buffered (0);
 
-   $self->signal_connect (realize => sub { $self->do_realize });
-   $self->signal_connect (map_event => sub { $self->auto_position (($self->allocation->values)[2,3]) });
+   $self->signal_connect (realize => sub { $_[0]->do_realize; 0 });
+   $self->signal_connect (map_event => sub { $_[0]->check_screen_size; $_[0]->auto_position (($_[0]->allocation->values)[2,3]) });
    $self->signal_connect (expose_event => sub { 1 });
-   $self->signal_connect (configure_event => sub { $self->do_configure ($_[1]) });
-   $self->signal_connect (delete_event => sub { main_quit Gtk2 });
-   $self->signal_connect (key_press_event => sub { $self->handle_key ($_[1]->keyval, $_[1]->state) });
+   $self->signal_connect (configure_event => sub { $_[0]->do_configure ($_[1]); 0 });
+   $self->signal_connect (delete_event => sub { main_quit Gtk2; 0 });
+   $self->signal_connect (key_press_event => sub { $_[0]->handle_key ($_[1]->keyval, $_[1]->state) });
 
-   $self->add_events ([qw(key_press_mask focus-change-mask button_press_mask
+   $self->{frame_extents_property}         = Gtk2::Gdk::Atom->intern ("_NET_FRAME_EXTENTS", 0);
+   $self->{request_frame_extents_property} = Gtk2::Gdk::Atom->intern ("_NET_REQUEST_FRAME_EXTENTS", 0);
+
+   $self->signal_connect (property_notify_event => sub {
+      return unless $_[0]{frame_extents_property} == $_[1]->atom;
+
+      $self->update_properties;
+
+      0
+   });
+
+   $self->add_events ([qw(key_press_mask focus-change-mask button_press_mask property_change_mask
                           button_release_mask pointer-motion-hint-mask pointer-motion-mask)]);
    $self->can_focus (1);
    $self->set_size_request (0, 0);
@@ -76,31 +108,6 @@ sub do_image_changed {
    my ($self) = @_;
 }
 
-sub set_subimage {
-   my ($self, $image) = @_;
-
-   delete $self->{dw};
-
-   $self->{subimage} = $image;
-
-   $self->{iw} = $image->get_width;
-   $self->{ih} = $image->get_height;
-
-   if ($self->{iw} && $self->{ih}) {
-      $self->auto_resize;
-   } else {
-      $self->clear_image;
-   }
-}
-
-sub set_image {
-   my ($self, $image) = @_;
-
-   $self->{image} = $image;
-
-   $self->set_subimage ($image);
-}
-
 sub kill_mplayer {
    my ($self) = @_;
 
@@ -114,24 +121,87 @@ sub kill_mplayer {
    }
 }
 
+sub set_subimage {
+   my ($self, $image) = @_;
+
+   $self->force_redraw;
+
+   $self->{subimage} = $image;
+
+   $self->{iw} = $image->get_width;
+   $self->{ih} = $image->get_height;
+
+   if ($self->{iw} && $self->{ih}) {
+      $self->auto_resize;
+   } else {
+      $self->clear_image;
+   }
+}
+
+=item $img->set_image ($gdk_pixbuf)
+
+Replace the currently-viewed image by the givne pixbuf.
+
+=cut
+
+sub set_image {
+   my ($self, $image) = @_;
+
+   $self->{image} = $image;
+
+   $self->set_subimage ($image);
+}
+
+=item $img->clear_image
+
+Removes the current image (usually replacing it by the default image).
+
+=cut
+
 sub clear_image {
    my ($self) = @_;
 
    $self->kill_mplayer;
-   $self->set_image ($title_img);
+
+   delete $self->{image};
+   delete $self->{subimage};
+
+   if ($self->{window} && $self->{window}->is_visible) {
+      $self->realize_image;
+   }
 }
+
+sub realize_image {
+   my ($self) = @_;
+
+   return if $self->{image};
+
+   $title_image ||= Gtk2::CV::require_image "cv.png";
+   $self->set_image ($title_image);
+   Scalar::Util::weaken $title_image;
+}
+
+=item $img->load_image ($path)
+
+Tries to load the given file (if it is an image), or embeds mplayer (if
+mplayer supports it).
+
+=cut
 
 sub load_image {
    my ($self, $path) = @_;
 
    $self->kill_mplayer;
-   delete $self->{dw};
+   $self->force_redraw;
 
    $self->{path} = $path;
 
-   my $image = eval { new_from_file Gtk2::Gdk::Pixbuf $path };
+   my $image = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg $path }
+               || eval { new_from_file Gtk2::Gdk::Pixbuf $path };
 
    if (!$image) {
+      local $@;
+
       $path = "./$path" if $path =~ /^-/;
 
       # try video
@@ -144,7 +214,7 @@ sub load_image {
          if ($mplayer =~ /^ID_VIDEO_ASPECT=([0-9\.]+)$/sm && $1 > 0) {
             $w = POSIX::ceil $w * $1 * ($h / $w); # correct aspect ratio, assume square pixels
          } else {
-            # no idea what to do, mplayer's aspect fatcors seem to be random
+            # no idea what to do, mplayer's aspect factors seem to be random
             #$w = POSIX::ceil $w * 1.50 * ($h / $w); # correct aspect ratio, assume square pixels
             #$w = POSIX::ceil $w * 1.33;
          }
@@ -161,13 +231,15 @@ sub load_image {
          $box->set_above_child (1);
          $box->set_visible_window (0);
          $box->set_events ([]);
-         my $window = $self->{mplayer_window} = new Gtk2::DrawingArea;
+
+         my $window = new Gtk2::DrawingArea;
          $box->add ($window);
          $self->add ($box);
          $box->show_all;
+         $window->realize;
+         $self->{mplayer_window} = $window;
 
-         $self->{mplayer_window}->realize;
-         my $xid = $self->{mplayer_window}->window->get_xid;
+         my $xid = $window->window->get_xid;
 
          pipe my $rfh, $self->{mplayer_fh};
          $self->{mplayer_fh}->autoflush (1);
@@ -179,7 +251,7 @@ sub load_image {
             open STDOUT, ">/dev/null";
             open STDERR, ">/dev/null";
             exec "mplayer", qw(-slave -nofs -nokeepaspect -noconsolecontrols -nomouseinput -zoom -fixed-vo -loop 0),
-                            -screenw => $w, -screenh => $h, -wid => $xid, $path;
+                            -wid => $xid, $path;
             POSIX::_exit 0;
          }
 
@@ -187,8 +259,12 @@ sub load_image {
       } else {
          # probably audio, or a real error
       }
-   } elsif ($@) {
+   }
+
+   if (!$image) {
       warn "$@";
+
+      $image = Gtk2::CV::require_image "error.png";
    }
 
    if ($image) {
@@ -199,35 +275,81 @@ sub load_image {
    }
 }
 
+sub check_screen_size {
+   my ($self) = @_;
+
+   my ($left, $right, $top, $bottom) = @{ $self->{frame_extents} || [] };
+
+   my $sw = $self->{screen_width}  - ($left + $right);
+   my $sh = $self->{screen_height} - ($top + $bottom);
+
+   if ($self->{sw} != $sw || $self->{sh} != $sh) {
+      ($self->{sw}, $self->{sh}) = ($sw, $sh);
+      $self->auto_resize if $self->{image};
+   }
+}
+
+sub update_properties {
+   my ($self) = @_;
+
+   (undef, undef, @data) = $_[0]->{window}->property_get (
+      $_[0]{frame_extents_property}, 
+      Gtk2::Gdk::Atom->intern ("CARDINAL", 0),
+      0, 4*4, 0);
+   # left, right, top, bottom
+   $self->{frame_extents} = \@data;
+
+   $self->check_screen_size;
+}
+
+sub request_frame_extents {
+   my ($self) = @_;
+
+   return if $self->{frame_extents};
+   return unless Gtk2::CV::gdk_net_wm_supports $self->{request_frame_extents_property};
+
+   # TODO
+   # send clientmessage
+}
+
 sub do_realize {
-   my ($self, $mapped) = @_;
+   my ($self) = @_;
 
    $self->{window} = $self->window;
 
-   $self->{sw} = $self->{window}->get_screen->get_width;
-   $self->{sh} = $self->{window}->get_screen->get_height;
-
-   $self->auto_resize if $self->{image};
-
-   $self->{drag_gc} = Gtk2::Gdk::GC->new ($self->window);
+   $self->{drag_gc} = Gtk2::Gdk::GC->new ($self->{window});
    $self->{drag_gc}->set_function ('xor');
-   $self->{drag_gc}->set_foreground ($self->style->white);
+   $self->{drag_gc}->set_rgb_foreground (new Gtk2::Gdk::Color 128*257, 128*257, 128*257);
+   $self->{drag_gc}->set_line_attributes (1, 'solid', 'round', 'miter');
 
-   0;
+   $self->{screen_width}  = $self->{window}->get_screen->get_width;
+   $self->{screen_height} = $self->{window}->get_screen->get_height;
+
+   $self->realize_image;
+   $self->request_frame_extents;
+
+   $self->check_screen_size;
+
+   0
 }
 
 sub draw_drag_rect {
    my $self = shift;
 
-   my $d = $self->{drag_info};
+   my $d = $self->{drag_info}
+      or return;
 
-   my $x = min @$d[0,2];
-   my $y = min @$d[1,3];
+   my $x1 = min @$d[0,2];
+   my $y1 = min @$d[1,3];
 
-   my $w = abs $d->[2] - $d->[0] - 1;
-   my $h = abs $d->[3] - $d->[1] - 1;
+   my $x2 = max @$d[0,2];
+   my $y2 = max @$d[1,3];
 
-   $self->window->draw_rectangle ($self->{drag_gc}, 0, $x, $y, $w, $h);
+   $_ = $self->{sx} * int .5 + $_ / $self->{sx} for ($x1, $x2);
+   $_ = $self->{sy} * int .5 + $_ / $self->{sy} for ($y1, $y2);
+
+   $self->{window}->draw_rectangle ($self->{drag_gc}, 0,
+                                    $x1, $y1, $x2 - $x1, $y2 - $y1);
 }
 
 sub do_button_press {
@@ -239,21 +361,27 @@ sub do_button_press {
       if ($press) {
          $self->{drag_info} = [ ($event->x, $event->y) x 2 ];
          $self->draw_drag_rect;
-      } else {
+      } elsif ($self->{drag_info}) {
+         $self->draw_drag_rect;
+
          my $d = delete $self->{drag_info};
 
-         return 0 unless $d;
-
-         $self->crop (
+         my ($x1, $y1, $x2, $y2) = (
             (min @$d[0,2]) / $self->{sx},
             (min @$d[1,3]) / $self->{sy},
             (max @$d[0,2]) / $self->{sx},
             (max @$d[1,3]) / $self->{sy},
          );
+
+         return unless ($x2-$x1) > 8 && ($y2-$y1) > 8;
+
+         $self->crop ($x1, $y1, $x2, $y2);
+      } else {
+         return 0;
       }
    }
 
-   1;
+   1
 }
 
 sub motion_notify_event {
@@ -280,7 +408,7 @@ sub motion_notify_event {
    @{$self->{drag_info}}[2,3] = ($x, $y);
    $self->draw_drag_rect;
 
-   1;
+   1
 }
 
 sub auto_position {
@@ -297,8 +425,6 @@ sub auto_position {
 sub auto_resize {
    my ($self) = @_;
 
-   return unless $self->{window};
-
    if ($self->{maxpect}
        || $self->{iw} > $self->{sw}
        || $self->{ih} > $self->{sh}) {
@@ -308,14 +434,27 @@ sub auto_resize {
    }
 }
 
+=item $img->resize_maxpect
+
+Resize the image so it is maximally large.
+
+=cut
+
 sub resize_maxpect {
    my ($self) = @_;
 
    my ($w, $h) = (int ($self->{iw} * $self->{sh} / $self->{ih}),
                   int ($self->{sh}));
    ($w, $h) = ($self->{sw}, $self->{ih} * $self->{sw} / $self->{iw}) if $w > $self->{sw};
+
    $self->resize ($w, $h);
 }
+
+=item $img->resize ($width, $height)
+
+Resize the image window to the given size.
+
+=cut
 
 sub resize {
    my ($self, $w, $h) = @_;
@@ -329,10 +468,16 @@ sub resize {
    $self->{dh} = $h;
 
    $self->auto_position ($w, $h);
-   $self->window->resize ($w, $h);
+   $self->{window}->resize ($w, $h);
 
    $self->redraw;
 }
+
+=item $img->uncrop
+
+Undo any cropping; Show the full image.
+
+=cut
 
 sub uncrop {
    my ($self) = @_;
@@ -340,19 +485,53 @@ sub uncrop {
    $self->set_subimage ($self->{image});
 }
 
+=item $img->crop ($x1, $y1, $x2, $y2)
+
+Crop the image to the specified rectangle.
+
+=cut
+
 sub crop {
    my ($self, $x1, $y1, $x2, $y2) = @_;
 
-   $x2 -= $x1;
-   $y2 -= $y1;
+   my $w = max ($x2 - $x1, 1);
+   my $h = max ($y2 - $y1, 1);
 
-   if ($x2 && $y2) {
-      $self->set_subimage (
-         $self->{subimage}->new_subpixbuf ($x1, $y1, $x2, $y2)
-      );
-   } else {
-      $self->uncrop;
-   }
+   $self->set_subimage (
+      $self->{subimage}->new_subpixbuf ($x1, $y1, $w, $h)
+   );
+}
+
+sub do_configure {
+   my ($self, $event) = @_;
+
+   my $window = $self->window;
+
+   my ($sw, $sh) = ($self->{sw}, $self->{sh});
+
+   my ($x, $y) = ($event->x    , $event->y     );
+   my ($w, $h) = ($event->width, $event->height);
+
+   $self->{w} = $w;
+   $self->{h} = $h;
+
+   # force a resize of the mplayer window, otherwise it doesn't receive
+   # a configureevent :/
+   $self->{mplayer_window}->window->resize ($w, $h)
+      if $self->{mplayer_window}
+         && $self->{mplayer_window}->window;
+
+   return unless $self->{subimage};
+
+   $w = max (16, $w);
+   $h = max (16, $h);
+
+   return if $self->{dw} == $w && $self->{dh} == $h;
+
+   $self->{dw} = $w;
+   $self->{dh} = $h;
+
+   $self->schedule_redraw;
 }
 
 sub handle_key {
@@ -405,21 +584,21 @@ sub handle_key {
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{r}) {
          $self->{interp} = 'nearest';
-         $self->redraw;
+         $self->force_redraw; $self->redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
          $self->{interp} = 'bilinear';
-         $self->redraw;
+         $self->force_redraw; $self->redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{S}) {
          $self->{interp} = 'hyper';
-         $self->redraw;
+         $self->force_redraw; $self->redraw;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{t}) {
-         $self->set_subimage (Gtk2::CV::flop (Gtk2::CV::transpose $self->{subimage}));
+         $self->set_subimage (Gtk2::CV::rotate $self->{subimage}, 270);
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{T}) {
-         $self->set_subimage (Gtk2::CV::transpose (Gtk2::CV::flop $self->{subimage}));
+         $self->set_subimage (Gtk2::CV::rotate $self->{subimage},  90);
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{Escape}
                && $self->{drag_info}) {
@@ -466,20 +645,38 @@ sub handle_key {
 sub schedule_redraw {
    my ($self) = @_;
 
-   $self->{refresh} ||= add Glib::Idle sub {
-      delete $self->{refresh};
+   $self->{window}->process_updates (1);
+   $self->{window}->get_screen->get_display->sync;
+   Gtk2->main_iteration while Gtk2->events_pending;
 
-      $self->redraw;
-      0
-   }, undef, 10;
+   $self->redraw;
+}
+
+sub force_redraw {
+   my ($self) = @_;
+
+   $self->{dw_} = -1;
 }
 
 sub redraw {
    my ($self) = @_;
 
-   return unless $self->{window};
+   return unless $self->{window} && $self->{window}->is_visible;
+
+   # delay resizing iff we expect the wm to set frame extents later
+   return if !$self->{frame_extents}
+             && Gtk2::CV::gdk_net_wm_supports $self->{frame_extents_property};
+
+   # delay if redraw pending
+   return if $self->{refresh};
+
+   # skip if no work to do
+   return if $self->{dw_} == $self->{dw}
+          && $self->{dh_} == $self->{dh};
 
    $self->{window}->set_back_pixmap (undef, 0);
+
+   ($self->{dw_}, $self->{dh_}) = ($self->{dw}, $self->{dh});
 
    my $pb = $self->{subimage}
       or return;
@@ -500,41 +697,26 @@ sub redraw {
    }
 
    $pm->draw_pixbuf ($self->style->white_gc,
-                     $pb,
+                     Gtk2::CV::dealpha $pb,
                      0, 0, 0, 0, $self->{dw}, $self->{dh},
                      "normal", 0, 0);
 
    $self->{window}->set_back_pixmap ($pm);
+   $self->{window}->clear_area (0, 0, $self->{dw}, $self->{dh});
 
-   $self->window->clear_area (0, 0, $self->{dw}, $self->{dh});
+   $self->draw_drag_rect;
 
-   Gtk2::Gdk->flush;
+   $self->{window}->process_updates (1);
+   $self->{window}->get_screen->get_display->sync;
 }
 
-sub do_configure {
-   my ($self, $event) = @_;
+=back
 
-   my $window = $self->window;
+=head1 AUTHOR
 
-   my ($sw, $sh) = ($self->{sw}, $self->{sh});
+Marc Lehmann <schmorp@schmorp.de>
 
-   my ($x, $y) = ($event->x, $event->y);
-   my ($w, $h) = ($event->width, $event->height);
+=cut
 
-   $self->{w} = $w;
-   $self->{h} = $h;
+1
 
-   return unless $self->{subimage};
-
-   $w = max (16, $w);
-   $h = max (16, $h);
-
-   return if $self->{dw} == $w && $self->{dh} == $h;
-
-   $self->{dw} = $w;
-   $self->{dh} = $h;
-
-   $self->schedule_redraw;
-}
-
-1;

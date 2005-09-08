@@ -1,3 +1,21 @@
+=head1 NAME
+
+Gtk2::CV::PostScript - a class for writing postscript files
+
+=head1 SYNOPSIS
+
+  use Gtk2::CV::PostScript;
+
+  # nothing gets exported
+
+=head1 DESCRIPTION
+
+=head2 FUNCTIONS
+
+=over 4
+
+=cut
+
 package Gtk2::CV::PostScript;
 
 use Carp;
@@ -33,9 +51,33 @@ my @papersize = map [
    ["letter", "Letter", 612, 792], ["foolscap", "Fools Cap", 612, 936], ["halfletter", "Half Letter", 396, 612],
 );
 
+=item Gtk2::CV::PostScript::papersizes
+
+Return an array of paper sizes. Each element contains an arrayref:
+
+  [$name, $description, $width_mm, $height_mm]
+
+i.e.:
+
+   ["a0", "A0", 2384, 3370]
+
+=cut
+
 sub papersizes {
-   @papersize;
+   @papersize
 }
+
+=item new Gtk2::CV::PostScript fh => $filehandle, pixbuf => $gdk_pixbuf_object, ...
+
+ fh => $filehandle
+ pixbuf => $pixbuf
+ size =>
+ aspect =>
+ binary =>
+ interpolate =>
+ margin =>
+
+=cut
 
 sub new {
    my $class = shift;
@@ -55,6 +97,12 @@ sub mm2ps {
 sub ps2mm {
    shift; map $_ * (2.54 / 72), @_;
 }
+
+=item $ps->print
+
+Write the pixbuf.
+
+=cut
 
 sub print {
    my ($self) = @_;
@@ -206,4 +254,12 @@ showpage
 EOF
 }
 
-1;
+=back
+
+=head1 AUTHOR
+
+Marc Lehmann <schmorp@schmorp.de>
+
+=cut
+
+1

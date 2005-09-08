@@ -1,3 +1,19 @@
+=head1 NAME
+
+Gtk2::CV::PrintDialog - the CV print dialog widget
+
+=head1 SYNOPSIS
+
+  use Gtk2::CV::PrintDialog;
+
+=head1 DESCRIPTION
+
+=head2 METHODS
+
+=over 4
+
+=cut
+
 package Gtk2::CV::PrintDialog;
 
 use Gtk2;
@@ -71,4 +87,13 @@ sub print {
    close $fh or die "$arg{destination}: $!";
 }
 
-1;
+=back
+
+=head1 AUTHOR
+
+Marc Lehmann <schmorp@schmorp.de>
+
+=cut
+
+1
+
