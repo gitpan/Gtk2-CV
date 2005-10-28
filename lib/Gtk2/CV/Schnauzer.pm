@@ -60,6 +60,7 @@ use strict;
 
 my %dir;
 my $dirid;
+my %directory_visited;
 
 sub regdir($) {
    $dir{$_[0]} ||= ++$dirid;
@@ -68,6 +69,14 @@ sub regdir($) {
 my $curdir = File::Spec->curdir;
 my $updir  = File::Spec->updir;
 
+sub parent_dir($) {
+   my ($volume, $dirs, $file) = File::Spec->splitpath ($_[0], 1);
+   my @dirs = File::Spec->splitdir ($dirs);
+   pop @dirs; # oh my god
+   $dirs = File::Spec->catdir (@dirs);
+   File::Spec->catpath ($volume, $dirs, $file)
+}
+
 sub IW() { 80 } # must be the same as in CV.xs(!)
 sub IH() { 60 } # must be the same as in CV.xs(!)
 sub IX() { 20 }
@@ -75,27 +84,39 @@ sub IY() { 16 }
 sub FY() { 12 } # font-y
 
 sub SCROLL_Y()    { 1  }
-sub PAGE_Y()      { 20 }
-sub SCROLL_TIME() { 150 }
+sub SCROLL_X()    { 10 }
+sub SCROLL_TIME() { 500 }
+
+sub FAST_RANGE()  { 2500 } # searching for this many entries * 2 is fast
+sub SLOW_RANGE()  {   10 } # doing this many slow ops per idle callback is ok
+
+sub F_CHECKED()  { 1 } # entry has been investigated
+sub F_ISDIR()    { 2 } # entry is certainly a directory
+sub F_HASXVPIC() { 4 } # entry (likely) has a thumbnail file
+sub F_HASPM()    { 8 } # entry has a pixmap
 
 # entries are arrays in this format:
 # [0] dir
 # [1] file
-# [2] Gtk2::Pixmap, or thumb file
-# [3] cached short filename
+# [2] flags
+# [3] pixmap
 
 sub img {
-   my $pb = Gtk2::CV::require_image $_[0];
+   scalar +(Gtk2::CV::require_image $_[0])->render_pixmap_and_mask (0.5)
+}
 
-   my $pm = scalar $pb->render_pixmap_and_mask (0.5);
-   my $w  = $pb->get_width;
-   my $h  = $pb->get_height;
+my %combine;
 
-   [
-      $pm,
-      (IW - $w) * 0.5, (IH - $h) * 0.5,
-      $w, $h
-   ]
+sub img_combine {
+   my ($self, $base, $add) = @_;
+   $combine{"$base,$add"} ||= do {
+      my ($w, $h) = $base->get_size;
+      my $pm = new Gtk2::Gdk::Pixmap $base, $w, $h, -1;
+      $pm->draw_drawable ($self->style->white_gc, $base, 0, 0, 0, 0, $w, $h);
+      $pm->draw_pixbuf   ($self->style->white_gc, $add , 0, 0, 0, 0, $w, $h, "normal",  0, 0);
+
+      $pm
+   }
 }
 
 my %ext_logo = (
@@ -141,14 +162,26 @@ my %ext_logo = (
    par2 => "par",
 );
 
-my $dir_img  = img "dir.png";
 my $file_img = img "file.png";
+my $diru_img = img "dir-unvisited.png";
+my $dirv_img = img "dir-visited.png";
+
+my $dirx_layer = Gtk2::CV::require_image "dir-xvpics.png";
+my $dire_layer = Gtk2::CV::require_image "dir-empty.png";
+my $dirs_layer = Gtk2::CV::require_image "dir-symlink.png";
 
 my %file_img = do {
    my %logo = reverse %ext_logo;
 
    map +($_ => img "file-$_.png"), keys %logo;
 };
+
+# get pathname of corresponding xvpics-dir
+sub xvdir($) {
+   $_[0] =~ m%^(.*/)?([^/]+)$%sm
+      or Carp::croak "FATAL: unable to split <$_[0]> into dirname/basename";
+   "$1.xvpics"
+}
 
 # get filename of corresponding xvpic-file
 sub xvpic($) {
@@ -169,10 +202,10 @@ sub extension {
       ? lc $1 : ();
 }
 
-sub read_thumb {
-   if (my $pb = eval { Gtk2::CV::load_jpeg Glib::filename_from_unicode $_[0] }) {
-      return [-1, -1, Gtk2::CV::dealpha $pb];
-   } elsif (open my $p7, "<:raw", Glib::filename_from_unicode $_[0]) {
+sub read_thumb($) {
+   if (my $pb = eval { Gtk2::CV::load_jpeg $_[0] }) {
+      return Gtk2::CV::dealpha $pb;
+   } elsif (open my $p7, "<:raw", $_[0]) {
       if (<$p7> =~ /^P7 332/) {
          1 while ($_ = <$p7>) =~ /^#/;
          if (/^(\d+)\s+(\d+)\s+255/) {
@@ -260,11 +293,26 @@ sub {
          my $status = shift;
 
          aio_unlink Glib::filename_from_unicode xvpic $job->{path}, sub {
-            $job->{data} = $status;
-            $job->finish;
+            aio_rmdir Glib::filename_from_unicode xvdir $job->{path}, sub {
+               $job->{data} = $status;
+               $job->finish;
+            };
          };
       };
    }
+};
+
+Gtk2::CV::Jobber::define unlink_thumb =>
+   pri   => 0,
+   class => "stat",
+sub {
+   my ($job) = @_;
+
+   aio_unlink Glib::filename_from_unicode xvpic $job->{path}, sub {
+      aio_rmdir Glib::filename_from_unicode xvdir $job->{path}, sub {
+         $job->finish;
+      };
+   };
 };
 
 Gtk2::CV::Jobber::define mv =>
@@ -321,15 +369,39 @@ sub jobber_update {
       if ($job->{type} eq "gen_thumb" && exists $job->{data}) {
          my $data = Encode::encode "iso-8859-1", $job->{data};
          my ($w, $h, $rs) = unpack "SSS", substr $data, -6;
-         $self->{entry}[$idx][2] = [
-            -1,
-            -1,
-            new_from_data Gtk2::Gdk::Pixbuf $data, 'rgb', 0, 8, $w, $h, $rs
-         ];
+
+         for ($self->{entry}[$idx]) {
+            $_->[2] &= ~F_HASPM;
+            $_->[2] |= F_HASXVPIC;
+            $_->[3] = new_from_data Gtk2::Gdk::Pixbuf $data, 'rgb', 0, 8, $w, $h, $rs;
+         }
+      } elsif ($job->{type} eq "unlink_thumb") {
+         for ($self->{entry}[$idx]) {
+            $_->[2] &= ~(F_HASPM | F_HASXVPIC);
+            $_->[3] = undef;
+         }
       }
 
       $self->draw_entry ($idx);
    }
+}
+
+sub force_pixmap($$) {
+   my ($self, $entry) = @_;
+
+   return if $entry->[2] & F_HASPM;
+
+   if ($entry->[3]) {
+      my $pb = ARRAY:: eq ref $entry->[3]
+               ? p7_to_pb @{$entry->[3]}
+               : $entry->[3];
+
+      $entry->[3] = $pb->render_pixmap_and_mask (0.5);
+   } else {
+      $entry->[3] = $file_img{ $ext_logo{ extension $entry->[1] } } || $file_img;
+   }
+
+   $entry->[2] |= F_HASPM;
 }
 
 # prefetch a file after a timeout
@@ -359,6 +431,7 @@ sub prefetch {
             return unless $id == $self->{prefetch_aio};
 
             aio_read $fh, $ofs, 4096, my $buffer, 0, sub {
+               return unless $self->{aio_reader};
                return delete $self->{aio_reader}
                   if $_[0] <= 0 || $ofs > 1024*1024;
 
@@ -387,8 +460,6 @@ sub coord {
 
    my $x = $event->x / (IW + IX);
    my $y = $event->y / (IH + IY);
-
-   $x = $self->{cols} - 1 if $x >= $self->{cols};
 
    (
       (max 0, min $self->{cols} - 1, $x),
@@ -422,10 +493,10 @@ sub INIT_INSTANCE {
    $self->{adj} = $self->{scroll}->get ("adjustment");
 
    $self->{adj}->signal_connect (value_changed => sub {
-      my $row = int $_[0]->value;
+      my $row = $_[0]->value;
 
       if (my $diff = $self->{row} - $row) {
-         $self->{row} = $row;
+         $self->{row}  = $row;
          $self->{offs} = $row * $self->{cols};
 
          if ($self->{window}) {
@@ -530,7 +601,7 @@ sub INIT_INSTANCE {
                delete $self->{sel}{$cursor};
                delete $self->{sel_x1};
 
-               $self->emit_sel_changed;
+               $self->emit_sel_changed ($_[1]->time);
 
                $self->invalidate (
                   (($cursor - $self->{offs}) % $self->{cols},
@@ -549,7 +620,8 @@ sub INIT_INSTANCE {
       } elsif ($_[1]->type eq "2button-press") { 
          $self->emit_activate ($cursor) if $cursor < @{$self->{entry}};
       }
-      1;
+
+      1
    });
 
    my $scroll_diff; # for drag & scroll
@@ -557,35 +629,29 @@ sub INIT_INSTANCE {
    $self->{draw}->signal_connect (motion_notify_event => sub {
       return unless exists $self->{sel_x1};
 
-      {
-         my $y = $_[1]->y;
+      my ($x, $y) = $self->get_pointer;
 
-         if ($y < - PAGE_Y) {
-            $scroll_diff = -$self->{page};
-         } elsif ($y < - SCROLL_Y) {
-            $scroll_diff = -1;
-         } elsif ($y > $self->{page} * (IH + IY) + PAGE_Y) {
-            $scroll_diff = +$self->{page};
-         } elsif ($y > $self->{page} * (IH + IY) + SCROLL_Y) {
-            $scroll_diff = +1;
-         } else {
-            $scroll_diff = 0;
-         }
+      $self->{sel_mouse_scroll} ||= [$x, 0];
+      my $dx = ($self->{sel_mouse_scroll}[0] - $x) / SCROLL_X;
 
-         $self->{scroll_id} ||= add Glib::Timeout SCROLL_TIME, sub {
-            my $row = $self->{row} + $scroll_diff;
-
-            $row = max 0, min $row, $self->{maxrow};
-
-            if ($self->{row} != $row) {
-               $self->{sel_y2} += $row - $self->{row};
-               $self->selrect;
-               $self->{adj}->set_value ($row);
-            }
-
-            1;
-         };
+      if ($y < - SCROLL_Y) {
+         $self->sel_scroll ($self->{sel_mouse_scroll}[1] - $dx);
+         $self->{sel_mouse_scroll}[1] = $dx;
+         $scroll_diff = -1;
+      } elsif ($y > $self->{page} * (IH + IY) + SCROLL_Y) {
+         $self->sel_scroll ($self->{sel_mouse_scroll}[1] - $dx);
+         $self->{sel_mouse_scroll}[1] = $dx;
+         $scroll_diff = +1;
+      } else {
+         $scroll_diff = 0;
+         delete $self->{sel_mouse_scroll};
       }
+
+      $self->{scroll_id} ||= add Glib::Timeout SCROLL_TIME, sub {
+         $self->sel_scroll ($scroll_diff);
+
+         1
+      };
 
       my ($x, $y) = $self->coord ($_[1]);
 
@@ -605,14 +671,39 @@ sub INIT_INSTANCE {
       return unless exists $self->{sel_x1};
 
       # nop
-      1;
+      1
+   });
+
+   # selection
+
+   $self->{sel_widget} = new Gtk2::Invisible;
+
+   # we need to hardcode the internal target atom list, as there is no
+   # other way to get at this info (for drag & drop, it's easy, so, again,
+   # the normal selection comes as an afterthought at best).
+   $self->{sel_widget}->selection_add_target (Gtk2::Gdk->SELECTION_PRIMARY, Gtk2::Gdk::Atom->new ($_), 1)
+      for qw (STRING TEXT UTF8_STRING COMPOUND_TEXT text/plain text/plain;charset=utf-8);
+
+   $self->{sel_widget}->signal_connect (selection_get => sub {
+      my (undef, $data, $info, $time) = @_;
+
+      $data->set_text (
+         join " ",
+            map /[^\x2b-\x7e\xa0-]/ ? do { s/([\x00-\x1f\"\\])/\\$1/g; "\"$_\"" }
+                                    : $_,
+               sort
+                  map "$_->[0]/$_->[1]",
+                     values %{$self->{sel} || {}}
+      );
    });
 
    # unnecessary redraws...
    $self->{draw}->signal_connect (focus_in_event  => sub { 1 });
    $self->{draw}->signal_connect (focus_out_event => sub { 1 });
 
-   $self->{draw}->add_events ([qw(button_press_mask button_release_mask button-motion-mask scroll_mask)]);
+   # gtk+ supports no motion compression, a major lacking feature. we have to pay for the
+   # workaround with incorrect behaviour and extra server-turnarounds.
+   $self->{draw}->add_events ([qw(button_press_mask button_release_mask button-motion-mask scroll_mask pointer-motion-hint-mask)]);
    $self->{draw}->can_focus (1);
 
    $self->signal_connect (key_press_event => sub { $self->handle_key ($_[1]->keyval, $_[1]->state) });
@@ -642,29 +733,39 @@ sub set_geometry_hints {
 }
 
 sub emit_sel_changed {
-   my ($self) = @_;
+   my ($self, $time) = @_;
+
+   $time ||= Gtk2->get_current_event_time;
 
    my $sel = $self->{sel};
 
    if (!$sel || !%$sel) {
+      Gtk2::Selection->owner_set (undef, Gtk2::Gdk->SELECTION_PRIMARY, $time)
+         if Gtk2::Gdk::Selection->owner_get (Gtk2::Gdk->SELECTION_PRIMARY) == $self->{sel_widget}->window;
+
       $self->{info}->set_text ("");
-   } elsif (1 < scalar %$sel) {
-      $self->{info}->set_text (sprintf "%d entries selected", scalar %$sel);
    } else {
-      my $entry = $self->{entry}[(keys %$sel)[0]];
+      Gtk2::Selection->owner_set ($self->{sel_widget}, Gtk2::Gdk->SELECTION_PRIMARY, $time)
+         if $time;
 
-      my $id = ++$self->{aio_sel_changed};
+      if (1 < scalar %$sel) {
+         $self->{info}->set_text (sprintf "%d entries selected", scalar %$sel);
+      } else {
+         my $entry = $self->{entry}[(keys %$sel)[0]];
 
-      aio_stat Glib::filename_from_unicode "$entry->[0]/$entry->[1]", sub {
-         return unless $id == $self->{aio_sel_changed};
-         $self->{info}->set_text (
-            sprintf "%s: %d bytes, last modified %s (in %s)",
-                    $entry->[1],
-                    -s _,
-                    (strftime "%Y-%m-%d %H:%M:%S", localtime +(stat _)[9]),
-                    $entry->[0],
-         );
-      };
+         my $id = ++$self->{aio_sel_changed};
+
+         aio_stat Glib::filename_from_unicode "$entry->[0]/$entry->[1]", sub {
+            return unless $id == $self->{aio_sel_changed};
+            $self->{info}->set_text (
+               sprintf "%s: %d bytes, last modified %s (in %s)",
+                       $entry->[1],
+                       -s _,
+                       (strftime "%Y-%m-%d %H:%M:%S", localtime +(stat _)[9]),
+                       $entry->[0],
+            );
+         };
+      }
    }
 
    $self->signal_emit (selection_changed => $self->{sel});
@@ -673,15 +774,15 @@ sub emit_sel_changed {
 sub emit_popup {
    my ($self, $event, $cursor) = @_;
 
-#   my $entry = $self->{entry}[$cursor];
-#   my $path = "$entry->[0]/$entry->[1]";
+   my $idx   = $self->cursor_valid ? $self->{cursor} : $cursor;
+   my $entry = $self->{entry}[$idx];
 
    my $menu = new Gtk2::Menu;
 
    if (exists $self->{dir}) {
       $menu->append (my $i_up = new Gtk2::MenuItem "Parent (^)");
       $i_up->signal_connect (activate => sub {
-         $self->set_dir ($self->{dir} . "/" . $updir);
+         $self->updir;
       });
    }
 
@@ -689,7 +790,7 @@ sub emit_popup {
    @sel = $cursor if !@sel && defined $cursor;
 
    if (@sel) {
-      $menu->append (my $item = new Gtk2::MenuItem "Selected");
+      $menu->append (my $item = new Gtk2::MenuItem "Do");
       $item->set_submenu (my $sel = new Gtk2::Menu);
 
       $sel->append (my $item = new Gtk2::MenuItem @sel . " file(s)");
@@ -701,20 +802,52 @@ sub emit_popup {
       $sel->append (my $item = new Gtk2::MenuItem "Update Thumbnails (Ctrl-U)");
       $item->signal_connect (activate => sub { $self->update_thumbnails (@sel) });
 
+      $sel->append (my $item = new Gtk2::MenuItem "Remove Thumbnails");
+      $item->signal_connect (activate => sub { $self->unlink_thumbnails (@sel) });
+
       $sel->append (my $item = new Gtk2::MenuItem "Delete");
       $item->set_submenu (my $del = new Gtk2::Menu);
       $del->append (my $item = new Gtk2::MenuItem "Physically (Ctrl-D)");
-      $item->signal_connect (activate => sub { $self->remove (@sel) });
+      $item->signal_connect (activate => sub { $self->unlink (@sel) });
 
       $self->signal_emit (popup_selected => $menu, \@sel);
    }
 
    {
-      $menu->append (my $item = new Gtk2::MenuItem "Selection");
+      $menu->append (my $item = new Gtk2::MenuItem "Select");
       $item->set_submenu (my $sel = new Gtk2::Menu);
 
-      $sel->append (my $item = new Gtk2::MenuItem "Expand etc. NYI");
-      $item->set_sensitive (0);
+      $sel->append (my $item = new Gtk2::MenuItem "By Prefix");
+      $item->set_submenu (my $by_pfx = new Gtk2::Menu);
+
+      my $name = $entry->[1];
+      my %cnt;
+
+      $cnt{Gtk2::CV::common_prefix_length $name, $self->{entry}[$_][1]}++
+         for (max 0, $idx - FAST_RANGE) .. min ($idx + FAST_RANGE, $#{$self->{entry}});
+
+      for my $len (reverse 1 .. -2 + length $entry->[1]) {
+         my $cnt = $cnt{$len}
+            or next;
+         my $pfx = substr $entry->[1], 0, $len;
+         $by_pfx->append (my $item = new Gtk2::MenuItem "$pfx*\t($cnt)");
+         $item->signal_connect (activate => sub {
+            delete $self->{sel};
+
+            for ((max 0, $idx - FAST_RANGE) .. min ($idx + FAST_RANGE, $#{$self->{entry}})) {
+               next unless $len <= Gtk2::CV::common_prefix_length $name, $self->{entry}[$_][1];
+               $self->{sel}{$_} = $self->{entry}[$_];
+            }
+
+            $self->invalidate_all;
+         });
+      }
+
+      $sel->append (my $item = new Gtk2::MenuItem "Unselect Thumbnailed");
+      $item->signal_connect (activate => sub { $self->selection_remove_thumbnailed });
+
+      $sel->append (my $item = new Gtk2::MenuItem "Keep only Thumbnailed");
+      $item->signal_connect (activate => sub { $self->selection_keep_only_thumbnailed });
    }
 
    $self->signal_emit (popup => $menu, $cursor, $event);
@@ -730,9 +863,10 @@ sub emit_activate {
    my $entry = $self->{entry}[$cursor];
    my $path = "$entry->[0]/$entry->[1]";
 
-   $self->{cursor_current} = 1;
+   $self->{cursor_current} = $path;
 
    if (-d $path) {
+      $self->push_state;
       $self->set_dir ($path);
    } else {
       $self->signal_emit (activate => $path);
@@ -759,7 +893,6 @@ sub draw_entry {
          ($offs % $self->{cols}, $offs / $self->{cols}) x 2,
       );
    }
-
 }
 
 sub cursor_valid {
@@ -775,10 +908,9 @@ sub cursor_valid {
 }
 
 sub cursor_move {
-   my ($self, $inc) = @_;
+   my ($self, $inc, $time) = @_;
 
    my $cursor = $self->{cursor};
-   delete $self->{cursor_current};
 
    if ($self->cursor_valid) {
       $self->clear_selection;
@@ -812,12 +944,17 @@ sub cursor_move {
                             && -d "$self->{entry}[$cursor][0]/$self->{entry}[$cursor][1]/$curdir";
 
          }
+      } else {
+         my $entry = $self->{entry}[$cursor];
+         $cursor += $inc if $self->{cursor_current} eq "$entry->[0]/$entry->[1]";
+         $cursor -= $inc if $cursor < 0 || $cursor >= @{$self->{entry}};
       }
 
       $self->make_visible ($cursor);
    }
 
    $self->{cursor} = $cursor;
+   delete $self->{cursor_current};
    $self->{sel}{$cursor} = $self->{entry}[$cursor];
 
    $self->emit_sel_changed;
@@ -864,14 +1001,16 @@ Generate (unconditionally) the thumbnails on the given entries.
 sub generate_thumbnails {
    my ($self, @idx) = @_;
 
-   for (sort { $b <=> $a } @idx) {
-      my $e = $self->{entry}[$_];
-      Gtk2::CV::Jobber::submit gen_thumb => "$e->[0]/$e->[1]";
-      delete $self->{sel}{$_};
-   }
+   Gtk2::CV::Jobber::inhibit {
+      for (sort { $b <=> $a } @idx) {
+         my $e = $self->{entry}[$_];
+         Gtk2::CV::Jobber::submit gen_thumb => "$e->[0]/$e->[1]";
+         delete $self->{sel}{$_};
+      }
 
-   $self->invalidate_all;
-   $self->emit_sel_changed;
+      $self->invalidate_all;
+      $self->emit_sel_changed;
+   };
 }
 
 =item $schnauzer->update_thumbnails (idx[, idx...])
@@ -883,39 +1022,92 @@ Update (if needed) the thumbnails on the given entries.
 sub update_thumbnails {
    my ($self, @idx) = @_;
 
-   for (sort { $b <=> $a } @idx) {
-      my $e = $self->{entry}[$_];
-      Gtk2::CV::Jobber::submit upd_thumb => "$e->[0]/$e->[1]";
-      delete $self->{sel}{$_};
+   Gtk2::CV::Jobber::inhibit {
+      for (sort { $b <=> $a } @idx) {
+         my $e = $self->{entry}[$_];
+         Gtk2::CV::Jobber::submit upd_thumb => "$e->[0]/$e->[1]";
+         delete $self->{sel}{$_};
+      }
+
+      $self->invalidate_all;
+      $self->emit_sel_changed;
+   };
+}
+
+=item $schnauzer->unlink_thumbnails (idx[, idx...])
+
+Physically remove the thumbnails on the given entries.
+
+=cut
+
+sub unlink_thumbnails {
+   my ($self, @idx) = @_;
+
+   Gtk2::CV::Jobber::inhibit {
+      for (sort { $b <=> $a } @idx) {
+         my $e = $self->{entry}[$_];
+         Gtk2::CV::Jobber::submit unlink_thumb => "$e->[0]/$e->[1]";
+         delete $self->{sel}{$_};
+      }
+
+      $self->invalidate_all;
+      $self->emit_sel_changed;
+   };
+}
+
+=item $schnauzer->selection_remove_thumbnailed
+
+=item $schnauzer->selection_keep_only_thumbnailed
+
+=cut
+
+sub selection_remove_thumbnailed {
+   my ($self) = @_;
+
+   for (keys %{$self->{sel}}) {
+      delete $self->{sel}{$_} if $self->{entry}[$_][2] & F_HASXVPIC;
    }
 
    $self->invalidate_all;
    $self->emit_sel_changed;
 }
 
-=item $schnauzer->remove (idx[, idx...])
+sub selection_keep_only_thumbnailed {
+   my ($self) = @_;
+
+   for (keys %{$self->{sel}}) {
+      delete $self->{sel}{$_} unless $self->{entry}[$_][2] & F_HASXVPIC;
+   }
+
+   $self->invalidate_all;
+   $self->emit_sel_changed;
+}
+
+=item $schnauzer->unlink (idx[, idx...])
 
 Physically delete the given entries.
 
 =cut
 
-sub remove {
+sub unlink {
    my ($self, @idx) = @_;
 
-   for (sort { $b <=> $a } @idx) {
-      my $e = $self->{entry}[$_];
-      Gtk2::CV::Jobber::submit unlink => "$e->[0]/$e->[1]";
+   Gtk2::CV::Jobber::inhibit {
+      for (sort { $b <=> $a } @idx) {
+         my $e = $self->{entry}[$_];
+         Gtk2::CV::Jobber::submit unlink => "$e->[0]/$e->[1]";
 
-      --$self->{cursor} if $self->{cursor} > $_;
-      delete $self->{sel}{$_};
-      splice @{$self->{entry}}, $_, 1, ();
-   }
+         --$self->{cursor} if $self->{cursor} > $_;
+         delete $self->{sel}{$_};
+         splice @{$self->{entry}}, $_, 1, ();
+      }
 
-   $self->entry_changed;
-   $self->setadj;
+      $self->entry_changed;
+      $self->setadj;
 
-   $self->emit_sel_changed;
-   $self->invalidate_all;
+      $self->emit_sel_changed;
+      $self->invalidate_all;
+   };
 }
 
 sub handle_key {
@@ -934,10 +1126,14 @@ sub handle_key {
       } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
          $self->rescan;
       } elsif ($key == $Gtk2::Gdk::Keysyms{d}) {
-         $self->remove (keys %{$self->{sel}});
+         $self->unlink (keys %{$self->{sel}});
       } elsif ($key == $Gtk2::Gdk::Keysyms{u}) {
          my @sel = keys %{$self->{sel}};
          $self->update_thumbnails (@sel ? @sel : 0 .. $#{$self->{entry}});
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{Return}) {
+         $self->cursor_move (0) unless $self->cursor_valid;
+         $self->emit_activate ($self->{cursor});
       } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
          $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
          $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
@@ -989,7 +1185,7 @@ sub handle_key {
          $self->prefetch (-1);
 
       } elsif ($key == ord '^') {
-         $self->set_dir ($self->{dir} . "/" . $updir) if exists $self->{dir};
+         $self->updir if exists $self->{dir};
 
       } elsif (($key >= (ord '0') && $key <= (ord '9'))
                || ($key >= (ord 'a') && $key <= (ord 'z'))) {
@@ -1019,7 +1215,7 @@ sub handle_key {
       }
    }
 
-   1;
+   1
 }
 
 sub invalidate {
@@ -1069,6 +1265,11 @@ sub entry_changed {
    my ($self) = @_;
 
    delete $self->{map};
+   delete $self->{idle_check_done};
+   delete $self->{idle_check_idx};
+   delete $self->{idle_check};
+   $self->{generation}++;
+   $self->start_idle_check;
 }
 
 sub selrect {
@@ -1116,6 +1317,20 @@ sub selrect {
    }
    for my $idx (keys %$prev) {
       $self->draw_entry ($idx) if !exists $self->{sel}{$idx};
+   }
+}
+
+sub sel_scroll {
+   my ($self, $row_diff) = @_;
+
+   my $row = $self->{row} + $row_diff;
+
+   $row = max 0, min $row, $self->{maxrow};
+
+   if ($self->{row} != $row) {
+      $self->{sel_y2} += $row - $self->{row};
+      $self->selrect;
+      $self->{adj}->set_value ($row);
    }
 }
 
@@ -1170,13 +1385,21 @@ sub expose {
    $layout->set_ellipsize ('end');
    $layout->set_width ($maxwidth * Gtk2::Pango->scale);
 
+   my $first_unchecked;
+
+   my @jobs;
+
 outer:
    for my $y (@y) {
       for my $x (@x) {
          if ($y >= $y1 && $y < $y2
              && $x >= $x1 && $x < $x2) {
             my $entry = $self->{entry}[$idx];
+            my $path = "$entry->[0]/$entry->[1]";
             my $text_gc;
+
+            push @jobs, $path
+               if exists $Gtk2::CV::Jobber::jobs{$path};
 
             # selected?
             if (exists $self->{sel}{$idx}) {
@@ -1193,36 +1416,21 @@ outer:
             }
 
             # pre-render thumb into pixmap
-            unless (ref $entry->[2] && ref $entry->[2][0]) {
-               if ($entry->[2]) {
-                  my ($pm, $w, $h);
+            $self->force_pixmap ($entry)
+               unless $entry->[2] & F_HASPM;
 
-                  my $pb = ref $entry->[2][2]
-                           ? $entry->[2][2]
-                           : p7_to_pb @{$entry->[2]};
+            $first_unchecked = $idx
+               unless $entry->[2] & F_CHECKED || defined $first_unchecked;
 
-                  $pm = $pb->render_pixmap_and_mask (0.5);
-                  ($w, $h) = ($pb->get_width, $pb->get_height);
-
-                  $entry->[2] = [
-                     $pm,
-                     (IW - $w) * 0.5, (IH - $h) * 0.5,
-                     $w, $h,
-                  ];
-               } else {
-                  $entry->[2] = $file_img{ $ext_logo{ extension $entry->[1] } }
-                                || $file_img;
-               }
-
-            }
+            my $pm = $entry->[3];
+            my ($pw, $ph) = $pm->get_size;
 
             $self->{window}->draw_drawable ($self->style->white_gc,
-                     $entry->[2][0],
+                     $pm,
                      0, 0,
-                     $x + $entry->[2][1],
-                     $y + $entry->[2][2],
-                     $entry->[2][3],
-                     $entry->[2][4]);
+                     $x + (IW - $pw) * 0.5,
+                     $y + (IH - $ph) * 0.5,
+                     $pw, $ph);
 
             $layout->set_text ($entry->[1]);
             my ($w, $h) = $layout->get_pixel_size;
@@ -1238,11 +1446,130 @@ outer:
       }
    }
 
+   push @Gtk2::CV::Jobber::jobs, reverse @jobs;
+
+   $self->{idle_check_idx} = $first_unchecked
+      if defined $first_unchecked;
+
    1;
 }
 
 sub do_activate {
    # nop
+}
+
+sub start_idle_check {
+   my ($self) = @_;
+
+   return if $self->{idle_check_done};
+#   $self->{inhibit_guard} ||= Gtk2::CV::Jobber::inhibit_guard;
+   $self->{idle_check_watcher} ||= add Glib::Idle sub { $self->idle_check }, undef, 500;
+}
+
+sub idle_check {
+   my ($self) = @_;
+
+   my $generation = $self->{generation};
+
+   my $todo = FAST_RANGE;
+
+   while (--$todo) {
+      my $idx = $self->{idle_check_idx}++;
+
+      if ($idx >= @{$self->{entry}}) {
+         if ($self->{idle_check}) {
+            # found a file, restart scan
+            delete $self->{idle_check};
+            delete $self->{idle_check_idx};
+            return 1;
+         }
+
+         # finish
+         $self->{idle_check_done}++;
+         delete $self->{idle_check_watcher};
+         return 0;
+      }
+
+      my $entry = $self->{entry}[$idx];
+
+      unless ($entry->[2] & F_CHECKED) {
+         $entry->[2] |= F_CHECKED;
+
+         my $path = "$entry->[0]/$entry->[1]";
+         $self->{idle_check}++;
+
+         if ($entry->[2] & F_HASXVPIC) {
+            my $xvpic = Glib::filename_from_unicode xvpic $path;
+            aio_open $xvpic, O_RDONLY, 0, sub {
+               return unless $generation == $self->{generation};
+
+               my $fh = shift
+                  or return $self->start_idle_check;
+
+               aio_readahead $fh, 0, -s $fh, sub {
+                  return unless $generation == $self->{generation};
+
+                  $entry->[2] &= ~F_HASPM;
+                  $entry->[3] = read_thumb $xvpic;
+                  $self->draw_entry ($idx);
+                  $self->start_idle_check;
+               };
+            };
+
+         } elsif ($entry->[2] & F_ISDIR) {
+            aio_stat Glib::filename_from_unicode "$path/.xvpics", sub {
+               return unless $generation == $self->{generation};
+
+               my $has_xvpics = -d _;
+
+               aio_lstat Glib::filename_from_unicode $path, sub {
+                  return unless $generation == $self->{generation};
+
+                  my $is_symlink = -l _;
+                  my $is_empty = 1;
+
+                  opendir my $fh, Glib::filename_from_unicode $path
+                     or return;
+                     while (defined ($_ = readdir $fh)) {
+                        next if $_ eq $updir;
+                        next if $_ eq $curdir;
+                        next if $_ eq ".xvpics";
+                        $is_empty = 0;
+                        last;
+                     }
+                  closedir $fh;
+
+                  my $img = $directory_visited{$path} ? $dirv_img : $diru_img;
+
+                  $img = $self->img_combine ($img, $dire_layer) if $is_empty;
+                  $img = $self->img_combine ($img, $dirx_layer) if $has_xvpics;
+                  $img = $self->img_combine ($img, $dirs_layer) if $is_symlink;
+
+                  $entry->[2] |= F_HASPM;
+                  $entry->[3] = $img;
+                  $self->draw_entry ($idx);
+                  $self->start_idle_check;
+               };
+            };
+         } else {
+            aio_stat Glib::filename_from_unicode $path, sub {
+               return unless $generation == $self->{generation};
+
+               if (-d _) {
+                  $entry->[2] |= F_ISDIR;
+                  $entry->[2] &= ~F_CHECKED;
+               }
+
+               $self->start_idle_check;
+            };
+         }
+
+         delete $self->{idle_check_watcher};
+         return 0;
+      }
+   }
+
+   return 1;
 }
 
 sub do_chpaths {
@@ -1251,6 +1578,7 @@ sub do_chpaths {
    Gtk2::CV::Jobber::inhibit {
       my $base = $self->{dir};
 
+      delete $self->{cursor_current};
       delete $self->{cursor};
       delete $self->{sel};
       delete $self->{map};
@@ -1295,7 +1623,7 @@ sub do_chpaths {
             $progress->increment;
          } elsif ($base eq $dir ? exists $xvpics{$file} : -r "$dir/.xvpics/$file") {
             delete $xvpics{$file};
-            push @f, [$dir, $file, read_thumb "$dir/.xvpics/$file"];
+            push @f, [$dir, $file, F_HASXVPIC];
             $progress->increment;
          } elsif ($leaves) {
             # this is faster than a normal stat on many modern filesystems
@@ -1304,14 +1632,14 @@ sub do_chpaths {
                   aio_lstat Glib::filename_from_unicode "$dir/$file", sub {
                      if (-d _) {
                         $leaves--;
-                        push @d, [$dir, $file, $dir_img, undef];
+                        push @d, [$dir, $file, F_ISDIR | F_HASPM, $directory_visited{"$dir/$file"} ? $dirv_img : $diru_img];
                      } else {
-                        push @f, [$dir, $file, undef, undef];
+                        push @f, [$dir, $file];
                      }
                      $progress->increment;
                   };
                } elsif ($! == ENOTDIR) {
-                  push @f, [$dir, $file, undef, undef];
+                  push @f, [$dir, $file];
                   $progress->increment;
                } else {
                   # does not exist:
@@ -1322,7 +1650,7 @@ sub do_chpaths {
                }
             };
          } else {
-            push @f, [$dir, $file, undef, undef];
+            push @f, [$dir, $file, undef, 0];
             $progress->increment;
          }
       }
@@ -1362,6 +1690,8 @@ sub do_chpaths {
             aio_unlink Glib::filename_from_unicode "$self->{dir}/.xvpics/$file";
          }
       }
+
+      $self->start_idle_check;
    };
 }
 
@@ -1387,6 +1717,8 @@ sub do_chdir {
 
    $dir = Glib::filename_to_unicode Cwd::abs_path Glib::filename_from_unicode $dir;
 
+   $directory_visited{$dir}++;
+
    opendir my $fh, Glib::filename_from_unicode $dir
       or die "$dir: $!";
 
@@ -1402,10 +1734,78 @@ sub do_chdir {
    $self->signal_emit (chpaths => [map eval { [$dir, Glib::filename_to_unicode $_] }, readdir $fh]);
 }
 
+=item $schnauzer->set_dir ($path)
+
+Replace the schnauzer contents by the files in the given directory.
+
+=cut
+
 sub set_dir {
    my ($self, $dir) = @_;
 
    $self->signal_emit (chdir => $dir);
+}
+
+=item $state = $schnauzer->get_state
+
+=item $schnauzer->set_state ($state)
+
+Saves/restores (some of) the current state, such as the current directory
+or currently displayed files.
+
+Can be used to switch temporarily to another directory.
+
+=cut
+
+sub get_state {
+   my ($self) = @_;
+
+   exists $self->{dir}
+      ? [$self->{dir}, undef]
+      : [undef, $self->get_paths]
+}
+
+sub set_state {
+   my ($self, $state) = @_;
+
+   my ($dir, $paths) = @$state;
+
+   if ($paths) {
+      $self->set_paths ($paths);
+   } else {
+      $self->set_dir ($dir);
+   }
+}
+
+=item $schnauzer->push_state
+
+=item $schnauzer->pop_state
+
+Pushes/pops the state from the state stack. Is used internally to
+implement recursing into subdirectories and returning.
+
+=cut
+
+sub push_state {
+   my ($self) = @_;
+
+   push @{ $self->{state_stack} ||= [] }, $self->get_state;
+}
+
+sub pop_state {
+   my ($self) = @_;
+
+   $self->set_state (pop @{ $self->{state_stack} });
+}
+
+sub updir {
+   my ($self) = @_;
+
+   if (@{ $self->{state_stack} || [] }) {
+      $self->pop_state;
+   } elsif (exists $self->{dir}) {
+      $self->set_dir (parent_dir $self->{dir});
+   }
 }
 
 sub get_paths {

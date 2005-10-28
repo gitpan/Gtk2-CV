@@ -20,7 +20,11 @@ CV.xs
 gtkrc
 cv.glade
 images/cv.png
-images/dir.png
+images/dir-unvisited.png
+images/dir-visited.png
+images/dir-xvpics.png
+images/dir-empty.png
+images/dir-symlink.png
 images/file.png
 images/error.png
 images/file-ace.png

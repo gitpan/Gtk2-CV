@@ -1,104 +1,128 @@
-TODO/FIXME: popup menu doesn't cause refresh (or maybe only internal refresh)
 TODO/FIXME: pixmap-bg-trick sometimes doesn't work (race?)
-TODO/FIXME: cursor movement does not clear selection
+TODO: rename, mass-rename
+
+1.1  Fri Oct 28 15:47:53 CEST 2005
+	- jobs for files currently shown in a schnauzer get prioritised.
+	- directories visited in a session are shown darker.
+	- unvisited directory with .xvpics in them are shown differently.
+	- add Remove Thumbnails menu entry.
+	- allow restricting image size to something less than the screen
+	  (ctrl-shift-m).
+	- fix a bug where background processes stopped processing jobs.
+	- primary selection support for schnauzer selections.
+	- documented and implemented scorlling behaviour while drag-selecting.
+	- implemented Select=>By Prefix.
+	- background loading of .xvpics (and checking for symlinks-to-dirs).
+	- use overlays to differentiate between directories that
+	  are empty, have .xvpics or are symlinks-to-directories.
+	- better/slower expose handling (we need double-refreshes due to
+	  probable bugs in gtk+ or X11).
+	- implement a dirstack (statestack) and make use of it.
+	- don't forget cursor position on ctrl-g and similar commands.
+	- implemented keep_only_thumbnailed and remove_thumbnailed.
+	- implemented multiple-image-window support in cv.
+	- do some extra random resizes on the mplayer window to get it
+	  to notice the damned window size.
+	- reap fork'ed job processes to avoid ressource leaks.
+	- fixed GNU R clustering.
 
 1.0  Wed Sep  7 18:41:38 CEST 2005
 	- fix alpha handling: we now compose with a checkerboard,
-          but exposing hidden pixel data is also supported in the code.
-        - use jpg instead of P7 format for thumbnails and remove p7
-          write support: better quality, smaller filesize.
-        - evaluate _NET_FRAME_EXTENTS to get actual maximum screen size.
-        - better mplayer integration (resize handling, aspect handling).
-        - fix some bugs when a Schnauzer window was resized and got
-          the wrong offset.
-        - don't crash when trying to crop to a size of less than a pixel.
-        - schnauzer now has two modes: directors view or single-file view.
-          this changes it's behaviour on rescan and other occasions.
-        - reduce the amount of random dithering.
-        - load jpeg files ~20% faster, create jpeg thumbnails an order
-          of magnitude faster.
-        - improved bin/cv documentation.
-        - improve scanning performance further by usign the directory
-          link count and by stat'ing possible directories early.
-        - do file data prefetch after space or backspace and 0.3s.
-        - better and faster casefolding.
-        - use pango's ellipsise functionality and cut at the end.
-        - moved the R clustering algo to a separate plugin (and fix it).
-        - moved the filename clustering algo to a separate plugin.
-        - try very hard to get the window size correct befre first map.
-        - only load the default title image when necessary (saves mem & cpu).
-        - change drag xor colour to #808080, uglier, but visible on all
-          images.
-        - added icon for .tif files.
-        - updated icons for some file-extensions.
-        - created a job system and create thumbnails in parallel and
-          in the background.
-        - more careful handling of filename encodings.
-        - use gdk_pixbuf_rotate_simple instead of our own functions.
+	  but exposing hidden pixel data is also supported in the code.
+	- use jpg instead of P7 format for thumbnails and remove p7
+	  write support: better quality, smaller filesize.
+	- evaluate _NET_FRAME_EXTENTS to get actual maximum screen size.
+	- better mplayer integration (resize handling, aspect handling).
+	- fix some bugs when a Schnauzer window was resized and got
+	  the wrong offset.
+	- don't crash when trying to crop to a size of less than a pixel.
+	- schnauzer now has two modes: directors view or single-file view.
+	  this changes it's behaviour on rescan and other occasions.
+	- reduce the amount of random dithering.
+	- load jpeg files ~20% faster, create jpeg thumbnails an order
+	  of magnitude faster.
+	- improved bin/cv documentation.
+	- improve scanning performance further by usign the directory
+	  link count and by stat'ing possible directories early.
+	- do file data prefetch after space or backspace and 0.3s.
+	- better and faster casefolding.
+	- use pango's ellipsise functionality and cut at the end.
+	- moved the R clustering algo to a separate plugin (and fix it).
+	- moved the filename clustering algo to a separate plugin.
+	- try very hard to get the window size correct befre first map.
+	- only load the default title image when necessary (saves mem & cpu).
+	- change drag xor colour to #808080, uglier, but visible on all
+	  images.
+	- added icon for .tif files.
+	- updated icons for some file-extensions.
+	- created a job system and create thumbnails in parallel and
+	  in the background.
+	- more careful handling of filename encodings.
+	- use gdk_pixbuf_rotate_simple instead of our own functions.
 	- played with resizing logic once more.
 
 0.5  Mon Jul 11 05:48:13 CEST 2005
-        - image window resizing now works again.
-        - much improved resize/move handling (still not up to xv's level).
-        - every schnauzer now has an associated label/info field.
-        - better ^D performance.
-        - can now play videos if mplayer is in the path (and probably is
-          identical to my versions and your config file is empty etc. etc.
-          the usual caveats about embedding mplayer...)
-          (http://itdp.fh-biergarten.de/mplayer-dev-eng/2004-12/txt00028.txt fixes
-           the resize problems).
-        - remove gtk20-compatibility cruft.
-        - added progress window for lengthy operations.
-        - removed <parent> entry, use popup=>Up.
-        - change of contact address.
-        - updated icons for some file-extensions.
-        - make cv's info label wrap as not to change horizontal window width
-          (doesn't work, but that's general gtk2 brokenness).
-        - use set_absolute_size for the schnauzer font. doesn't result in an
-          absolute size, but at least results in the same height everywhere.
-        - implemented a primitive plugin system (see Gtk2::CV::Plugin and
-          eg/plugin-skeleton).
-        - removed bin/cvc's clusteriser.
-        - added a new clusteriser algorithm, use Popup=>"Filename clustering..."
-        - set _X_CWD to current dir in bin/cv (a rather special feature...).
-        - further directory scanning speed improvements.
-        - IO::AIO use for some speedups and more concurrency.
+	- image window resizing now works again.
+	- much improved resize/move handling (still not up to xv's level).
+	- every schnauzer now has an associated label/info field.
+	- better ^D performance.
+	- can now play videos if mplayer is in the path (and probably is
+	  identical to my versions and your config file is empty etc. etc.
+	  the usual caveats about embedding mplayer...)
+	  (http://itdp.fh-biergarten.de/mplayer-dev-eng/2004-12/txt00028.txt fixes
+	   the resize problems).
+	- remove gtk20-compatibility cruft.
+	- added progress window for lengthy operations.
+	- removed <parent> entry, use popup=>Up.
+	- change of contact address.
+	- updated icons for some file-extensions.
+	- make cv's info label wrap as not to change horizontal window width
+	  (doesn't work, but that's general gtk2 brokenness).
+	- use set_absolute_size for the schnauzer font. doesn't result in an
+	  absolute size, but at least results in the same height everywhere.
+	- implemented a primitive plugin system (see Gtk2::CV::Plugin and
+	  eg/plugin-skeleton).
+	- removed bin/cvc's clusteriser.
+	- added a new clusteriser algorithm, use Popup=>"Filename clustering..."
+	- set _X_CWD to current dir in bin/cv (a rather special feature...).
+	- further directory scanning speed improvements.
+	- IO::AIO use for some speedups and more concurrency.
 
 0.3  Sun Aug  1 21:59:49 CEST 2004
 	- cv * now correctly loads && selects the first image again.
-        - changed selection behaviour to select ranges not rectangles
-          (could be configurable at runtime).
-        - many small bugfixes.
-        - better display behaviour when viewing many images quickly.
-        - changed sort order to sth... strange (case insensitive,
-          numbers < 5 digits sorted in numerical order).
+	- changed selection behaviour to select ranges not rectangles
+	  (could be configurable at runtime).
+	- many small bugfixes.
+	- better display behaviour when viewing many images quickly.
+	- changed sort order to sth... strange (case insensitive,
+	  numbers < 5 digits sorted in numerical order).
 
 0.2  Thu Nov 20 07:49:55 CET 2003
 	- add DSC comments (except for %%page).
-        - implemented binary encoding for postscript printing.
-        - ctrl-s == rescan.
-        - less-latency resizes.
-        - after implementing filename_to_unicode maybe it is time to use it...
+	- implemented binary encoding for postscript printing.
+	- ctrl-s == rescan.
+	- less-latency resizes.
+	- after implementing filename_to_unicode maybe it is time to use it...
 
 0.15  Wed Nov 12 21:33:32 CET 2003
 	- add nifty print dialog, using glade and GladeXML. GladeXML needs
-          some convinience functions, but is ok to use.
-        - improved schnauzer scrolling and geometry hints.
-        - bugfixes, as usual.
-        - implemented ctrl-u.
-        - implemented maxpect-always mode.
+	  some convinience functions, but is ok to use.
+	- improved schnauzer scrolling and geometry hints.
+	- bugfixes, as usual.
+	- implemented ctrl-u.
+	- implemented maxpect-always mode.
 
 0.14  Mon Nov 10 20:11:15 CET 2003
 	- use subpixbufs for cropping.
 	- don't force redraws anymore, hopefully the result is the same.
-        - primitive printing with automaxpect (always to /tmp/x, watch out!).
-        - off-by-one error in flip code fixed.
-        - replaced nearest interpolation to tiles for thumbnail generation.
-        - much improved thumbnail dithering.
-        - applied drag_rect patch by muppet, together with some infrastructure
-          improvements.
-        - faster and less accurate text "autoscaling".
+	- primitive printing with automaxpect (always to /tmp/x, watch out!).
+	- off-by-one error in flip code fixed.
+	- replaced nearest interpolation to tiles for thumbnail generation.
+	- much improved thumbnail dithering.
+	- applied drag_rect patch by muppet, together with some infrastructure
+	  improvements.
+	- faster and less accurate text "autoscaling".
 
 0.13  Sat Nov  8 14:13:24 CET 2003
 	- Applied patch by muppet to backport it to gtk2.0,
-          plus portabiity fixes.
+	  plus portabiity fixes.

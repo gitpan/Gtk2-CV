@@ -57,9 +57,14 @@ sub INIT_INSTANCE {
 
    $self->signal_connect (realize => sub { $_[0]->do_realize; 0 });
    $self->signal_connect (map_event => sub { $_[0]->check_screen_size; $_[0]->auto_position (($_[0]->allocation->values)[2,3]) });
-   $self->signal_connect (expose_event => sub { 1 });
+   $self->signal_connect (expose_event => sub {
+      # in most cases, we get no expose events, except when our _own_ popups
+      # obscure some part of the window. se we have to do lots of unneessary refreshes :(
+      $self->{window}->clear_area ($_[1]->area->values);
+      $self->draw_drag_rect ($_[1]->area);
+      1 
+   });
    $self->signal_connect (configure_event => sub { $_[0]->do_configure ($_[1]); 0 });
-   $self->signal_connect (delete_event => sub { main_quit Gtk2; 0 });
    $self->signal_connect (key_press_event => sub { $_[0]->handle_key ($_[1]->keyval, $_[1]->state) });
 
    $self->{frame_extents_property}         = Gtk2::Gdk::Atom->intern ("_NET_FRAME_EXTENTS", 0);
@@ -234,6 +239,13 @@ sub load_image {
 
          my $window = new Gtk2::DrawingArea;
          $box->add ($window);
+         # some extra flickering to force configure events to mplayer
+         $window->signal_connect (event => sub {
+            $self->update_mplayer_window
+               if $_[1]->type =~ /^(?:map|property-notify)$/;
+
+            0
+         });
          $self->add ($box);
          $box->show_all;
          $window->realize;
@@ -284,7 +296,8 @@ sub check_screen_size {
    my $sh = $self->{screen_height} - ($top + $bottom);
 
    if ($self->{sw} != $sw || $self->{sh} != $sh) {
-      ($self->{sw}, $self->{sh}) = ($sw, $sh);
+      ($self->{sw},  $self->{sh})  = ($sw, $sh);
+      ($self->{rsw}, $self->{rsh}) = ($sw, $sh);
       $self->auto_resize if $self->{image};
    }
 }
@@ -334,7 +347,7 @@ sub do_realize {
 }
 
 sub draw_drag_rect {
-   my $self = shift;
+   my ($self, $area) = @_;
 
    my $d = $self->{drag_info}
       or return;
@@ -348,8 +361,15 @@ sub draw_drag_rect {
    $_ = $self->{sx} * int .5 + $_ / $self->{sx} for ($x1, $x2);
    $_ = $self->{sy} * int .5 + $_ / $self->{sy} for ($y1, $y2);
 
+   $self->{drag_gc}->set_clip_rectangle ($area)
+      if $area;
+
    $self->{window}->draw_rectangle ($self->{drag_gc}, 0,
                                     $x1, $y1, $x2 - $x1, $y2 - $y1);
+
+   # workaround for Gtk2-bug, arg should be undef
+   $self->{drag_gc}->set_clip_region ($self->{window}->get_clip_region)
+      if $area;
 }
 
 sub do_button_press {
@@ -416,8 +436,8 @@ sub auto_position {
 
    if ($self->{window}) {
       my ($x, $y) = $self->get_position;
-      my $nx = max 0, min $self->{sw} - $w, $x;
-      my $ny = max 0, min $self->{sh} - $h, $y;
+      my $nx = max 0, min $self->{rsw} - $w, $x;
+      my $ny = max 0, min $self->{rsh} - $h, $y;
       $self->move ($nx, $ny) if $nx != $x || $ny != $y;
    }
 }
@@ -461,8 +481,8 @@ sub resize {
    
    return unless $self->{window};
 
-   my $w = max (16, min ($self->{sw}, $w));
-   my $h = max (16, min ($self->{sh}, $h));
+   my $w = max (16, min ($self->{rsw}, $w));
+   my $h = max (16, min ($self->{rsh}, $h));
 
    $self->{dw} = $w;
    $self->{dh} = $h;
@@ -502,6 +522,17 @@ sub crop {
    );
 }
 
+sub update_mplayer_window {
+   my ($self) = @_;
+
+   # force a resize of the mplayer window, otherwise it doesn't receive
+   # a configureevent :/
+   $self->{mplayer_window}->window->resize (1, 1),
+   $self->{mplayer_window}->window->resize ($self->{w}, $self->{h})
+      if $self->{mplayer_window}
+         && $self->{mplayer_window}->window;
+}
+
 sub do_configure {
    my ($self, $event) = @_;
 
@@ -515,11 +546,7 @@ sub do_configure {
    $self->{w} = $w;
    $self->{h} = $h;
 
-   # force a resize of the mplayer window, otherwise it doesn't receive
-   # a configureevent :/
-   $self->{mplayer_window}->window->resize ($w, $h)
-      if $self->{mplayer_window}
-         && $self->{mplayer_window}->window;
+   $self->update_mplayer_window;
 
    return unless $self->{subimage};
 
@@ -546,6 +573,13 @@ sub handle_key {
       } elsif ($key == $Gtk2::Gdk::Keysyms{m}) {
          $self->{maxpect} = !$self->{maxpect};
          $self->auto_resize;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{M}) {
+         if ($self->{rsw} == $self->{sw} && $self->{rsh} == $self->{sh}) {
+            ($self->{sw}, $self->{sh}) = ($self->{dw},  $self->{dh});
+         } else {
+            ($self->{sw}, $self->{sh}) = ($self->{rsw}, $self->{rsh});
+         }
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{e}) {
          if (fork == 0) {

@@ -25,6 +25,7 @@ use File::Spec;
 
 my $mainwin;
 my $viewer;
+my $viewer_count;
 my $schnauzer;
 my $info;
 my $help;
@@ -40,12 +41,57 @@ sub new_schnauzer {
                   (File::Spec->splitpath ($_[1]))[2],
                   -s $_[1];
       $info->set_label ($label);
-      $viewer->load_image ($_[1]);
+      $viewer->load_image ($_[1]) if $viewer; # TODO: error, or chose ANY viewer
    });
 
    Gtk2::CV::Plugin->call (new_schnauzer => $s);
 
    $s
+}
+
+sub new_viewer {
+   my $self = new Gtk2::CV::ImageWindow;
+
+   $viewer_count++;
+
+   $self->set_title ("CV: Image");
+
+   $self->signal_connect (key_press_event => sub {
+      $viewer = $_[0];
+
+      my $key = $_[1]->keyval;
+      my $state = $_[1]->state;
+
+      if ($state * "control-mask" && $key == $Gtk2::Gdk::Keysyms{c}) {
+         my $viewer = new_viewer ();
+         $viewer->set_image ($_[0]->{image});
+         $viewer->show_all;
+         1
+      } else {
+         &std_keys
+            or $schnauzer->signal_emit (key_press_event => $_[1])
+      }
+   });
+   $self->signal_connect (delete_event => sub { $_[0]->destroy; 0 });
+   $self->signal_connect (destroy => sub {
+      $viewer = undef if $viewer == $_[0];
+
+      main_quit Gtk2 unless --$viewer_count;
+
+      0
+   });
+
+   $self->signal_connect (button3_press_event => sub {
+      $mainwin->visible
+         ? $mainwin->hide
+         : $mainwin->show_all;
+
+      1
+   });
+
+   Gtk2::CV::Plugin->call (new_imagewindow => $self);
+
+   $self
 }
 
 sub std_keys {
@@ -55,7 +101,7 @@ sub std_keys {
    my $ctrl = $state * "control-mask";
 
    if ($key == $Gtk2::Gdk::Keysyms{q}) {
-      main_quit Gtk2;
+      $viewer->destroy;
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{v}) {
       my $w = new Gtk2::Window;
 
@@ -90,24 +136,8 @@ sub std_keys {
 }
 
 {
-   $viewer = new Gtk2::CV::ImageWindow;
-
-   $viewer->set_title ("CV: Image");
-
-   $viewer->signal_connect (key_press_event => sub {
-      &std_keys
-         or $schnauzer->signal_emit (key_press_event => $_[1])
-   });
-   $viewer->signal_connect (delete_event => sub { main_quit Gtk2 });
-
-   $viewer->signal_connect (button3_press_event => sub {
-      $mainwin->visible
-         ? $mainwin->hide
-         : $mainwin->show_all;
-      1
-   });
-
-   Gtk2::CV::Plugin->call (new_imagewindow => $viewer);
+   $viewer = new_viewer;
+   $::cur_viewer = $viewer;
 
    $schnauzer = new_schnauzer;
 
@@ -144,6 +174,8 @@ $viewer->show_all;
 main Gtk2;
 
 __DATA__
+
+=encoding utf-8
 
 =head1 NAME
 
@@ -259,6 +291,7 @@ You can use the following keys in the image window:
  m            maximize to screensize
  M            maximize to screensize, respecting image aspect
  ctrl-m       toggle maxpect-always mode
+ ctrl-sift-m  toggle using current image size as max image size
  u            uncrop
  r            set scaling mode to 'nearest' (fastest)
  s            set scaling mode to 'bilinear' (default)
@@ -266,8 +299,9 @@ You can use the following keys in the image window:
  t            rotate clockwise 90°
  T            rotate counterclockwise°
  ctrl-v       open a new visual schnauzer window for the current dir
+ ctrl-c       clone the current image window
  ctrl-e       run an editor ($CV_EDITOR or "gimp") on the current image
- ctrl-p       fire up the print fialog
+ ctrl-p       fire up the print dialog
  escape       cancel a crop action
 
 And when playing movies, these additional keys are active:
@@ -291,6 +325,10 @@ Left-clicking into the image window will let you crop the image (usually
 to zoom into large images that CV scales down).
 
 =head2 THE VISUAL SCHNAUZER
+
+Any image-loading action in a schnauzer window acts on the
+"last-recently-activated" imagewindow, which currently is simply the last
+image window that received a keypress.
 
 You can use the following keys in the schnauzer window:
 
@@ -322,6 +360,43 @@ You can use the following keys in the schnauzer window:
 
 Right-clicking into the schnauzer window displays a pop-up menu with
 additional actions.
+
+=head3 SELECTION
+
+You can select entries in the Schnauzer in a variety of ways:
+
+=over 4
+
+=item Keyboard
+
+Moving the cursor with the keyboard will first deselect all files and then
+select the file you moved to.
+
+=item Clicking
+
+Clicking on an entry will select the one you clicked and deselect all
+others.
+
+=item Shift-Clicking
+
+Shift-clicking will toggle the selection on the entry under the mouse.
+
+=item Dragging
+
+Dragging will select all entries between the one selected when pushing the
+button and the one selected when releasing the button. If you move above
+or below the schnauzer area while drag-selecting, the schnauzer will move
+up/down one row twice per second. In addition, horizontal mouse movement
+acts as a kind of invisible horizontal scrollbar.
+
+=item Hint: double-click works while click-selecting
+
+You can double-click any image while click-selecting to display it
+without stopping the selection process. This will act as if you normally
+double-clicked the image to display it, and will toggle the selection
+twice, resulting in no change.
+
+=back
 
 =head1 FILES
 

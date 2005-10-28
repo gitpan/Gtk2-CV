@@ -14,6 +14,8 @@ Gtk2::CV::Jobber - a job queue mechanism for Gtk2::CV
 
 package Gtk2::CV::Jobber;
 
+use POSIX ();
+
 use Scalar::Util ();
 use IO::AIO;
 
@@ -32,14 +34,20 @@ my %type;
 my @type; # type order
 
 my $disabled;
+my @idle_slave;
 
-my $NUMCPU = qx<grep -c ^processor /proc/cpuinfo> * 1 || 1;
+my $MAXFORK = 1 + do {
+   local $/;
+   open my $fh, "<", "/proc/cpuinfo"
+      or return 1;
+   scalar (() = <$fh> =~ /^processor/mg) || 1
+};
 
 my %class_limit = (
    other => 32,
    stat  => 16,
    read  =>  2,
-   fork  => $NUMCPU + 1,
+   fork  => $MAXFORK,
 );
 
 my $progress;
@@ -75,12 +83,14 @@ job:
 
          die "FATAL: unknown job type <@types> encountered, aborting.\n";
       } else {
-         delete $jobs{pop @jobs};
-         $progress->increment;
+         delete $jobs{pop @jobs}
+            and $progress->increment;
       }
    }
 
    undef $progress;
+
+   (pop @idle_slave)->destroy while @idle_slave;
 }
 
 =item Gtk2::CV::Jobber::define $type, [option => $value, ...], $cb
@@ -172,6 +182,16 @@ sub inhibit(&) {
    die if $@;
 }
 
+sub inhibit_guard {
+   disable;
+
+   bless { }, Gtk2::CV::Jobber::Inhibit::;
+}
+
+sub Gtk2::CV::Jobber::Inhibit::DESTROY {
+   enable;
+}
+
 =back
 
 =head2 The Gtk2::CV::Jobber::Job class
@@ -214,8 +234,6 @@ Methods:
 Has to be called by the callback when the job has finished.
 
 =cut
-
-my @idle_slave;
 
 sub Gtk2::CV::Jobber::Job::run {
    my ($job) = @_;
@@ -329,7 +347,7 @@ sub new {
    $self->{pid} = fork;
 
    if ($self->{pid}) {
-      close $self->{s};
+      close delete $self->{s};
 
       $self->{w} = add_watch Glib::IO fileno $self->{m},
                          in => sub { $self->reply; 1 },
@@ -337,12 +355,9 @@ sub new {
                          &Glib::G_PRIORITY_HIGH;
 
    } else {
-      eval {
-         close $self->{m};
+      close delete $self->{m};
 
-         $self->slave;
-      };
-
+      eval { $self->slave };
       warn "slave process died unexpectedly: $@" if $@;
 
       POSIX::_exit (0);
@@ -399,7 +414,7 @@ sub slave {
       $job->{slave} = $self;
 
       my $type = $type{$job->{type}}
-         or die;
+         or die "unknown job type requested ($job->{type})";
 
       eval {
          $type->{cb}->($job);
@@ -418,9 +433,10 @@ sub reply {
    my $job = $self->_recv ($self->{m})
       or return;
 
-   $job->finish;
+   push @idle_slave, $self
+      unless $job->{event};
 
-   push @idle_slave, $self;
+   $job->finish;
 }
 
 sub send {
@@ -447,6 +463,12 @@ sub destroy {
    my ($self) = @_;
 
    remove Glib::Source delete $self->{w} if $self->{w};
+
+   syswrite $self->{m}, pack "N", 0 if $self->{m};
+   close delete $self->{s} if $self->{s};
+   close delete $self->{m} if $self->{m};
+
+   waitpid delete $self->{pid}, 0 if $self->{pid};
 }
 
 =back

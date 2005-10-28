@@ -58,11 +58,7 @@ sub INIT_INSTANCE {
          $self->{schnauzer}->signal_handler_disconnect (delete $self->{signal});
       }
 
-      if ($self->{paths}) {
-         $self->{schnauzer}->set_paths (delete $self->{paths});
-      } else {
-         $self->{schnauzer}->set_dir (delete $self->{dir});
-      }
+      $self->{schnauzer}->pop_state;
 
       %{$_[0]} = ()
    });
@@ -77,20 +73,11 @@ sub clusterize {
 sub analyse {
    my ($self) = @_;
 
-   my $paths = $self->{schnauzer}->get_paths;
-
-   # remember state
-   if (exists $self->{schnauzer}{dir}) {
-      $self->{dir} = $self->{schnauzer}{dir};
-      delete $self->{paths};
-   } else {
-      delete $self->{dir};
-      $self->{paths} = $paths;
-   }
+   $self->{schnauzer}->push_state;
 
    my $progress = new Gtk2::CV::Progress title => "splitting...";
 
-   $self->{_paths} = $paths;
+   my $paths = $self->{schnauzer}->get_paths;
    $self->{select} = [$paths];
 
    my %files = map {

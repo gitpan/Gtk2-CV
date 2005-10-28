@@ -128,6 +128,23 @@ MODULE = Gtk2::CV PACKAGE = Gtk2::CV
 
 PROTOTYPES: ENABLE
 
+# missing function in perl. really :)
+int
+common_prefix_length (a, b)
+	unsigned char *a = (unsigned char *)SvPVutf8_nolen ($arg);
+	unsigned char *b = (unsigned char *)SvPVutf8_nolen ($arg);
+	CODE:
+        RETVAL = 0;
+
+        while (*a == *b && *a)
+          {
+            RETVAL += (*a & 0xc0) != 0x80;
+            a++, b++;
+          }
+
+        OUTPUT:
+        RETVAL
+
 # missing in Gtk2 perl module
 
 gboolean

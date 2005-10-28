@@ -1,24 +1,9 @@
 package Gtk2::CV::Plugin::RCluster;
 
+use strict;
+
 use Gtk2::CV;
-
 use Gtk2::CV::Plugin;
-
-sub pixme {
-   my ($entry) = @_;
-   my $str;
-
-   if (ref $entry->[2] && !ref $entry->[2][0]) {
-      return $entry->[2][2];
-    
-   } elsif (ref $entry->[2] && Gtk2::Gdk::Pixmap:: eq ref $entry->[2][0]) {
-      my $pb = Gtk2::Gdk::Pixbuf->get_from_drawable ($entry->[2][0], undef, 0, 0, 0, 0, -1, -1);
-      return $pb->get_pixels;
-
-   } else {
-      ();
-   }
-}
 
 sub clusterise {
    my ($pics) = @_;
@@ -41,6 +26,7 @@ EOF
    close $fh;
 
    system "R CMD BATCH --slave --vanilla $rfile /dev/null";
+   #$? && die ...;#TODO
 
    unlink $rfile;
 
@@ -62,13 +48,17 @@ sub histsort_selected {
    my @idx;
 
    for my $i (sort { $a <=> $b } keys %$sel) {
-      my $r = pixme $entry->[$i];
- 
-      if (defined $r) {
-         push @idx, $i;
-         push @ent, $entry->[$i];
-         push @pic, $r;
-      }
+      my $entry = $entry->[$i];
+
+      next unless $entry->[2] & Gtk2::CV::Schnauzer::F_HASXVPIC;
+
+      $schnauzer->force_pixmap ($entry);
+      
+      my $pb = Gtk2::Gdk::Pixbuf->get_from_drawable ($entry->[3], undef, 0, 0, 0, 0, -1, -1);
+
+      push @idx, $i;
+      push @ent, $entry;
+      push @pic, $pb->get_pixels;
    }
 
    my $sorted = clusterise \@pic;
