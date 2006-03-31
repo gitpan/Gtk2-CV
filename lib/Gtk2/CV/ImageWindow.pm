@@ -55,6 +55,8 @@ sub INIT_INSTANCE {
 
    $self->double_buffered (0);
 
+   $self->set_role ("image window");
+
    $self->signal_connect (realize => sub { $_[0]->do_realize; 0 });
    $self->signal_connect (map_event => sub { $_[0]->check_screen_size; $_[0]->auto_position (($_[0]->allocation->values)[2,3]) });
    $self->signal_connect (expose_event => sub {
@@ -143,16 +145,18 @@ sub set_subimage {
    }
 }
 
-=item $img->set_image ($gdk_pixbuf)
+=item $img->set_image ($gdk_pixbuf[, $type])
 
-Replace the currently-viewed image by the givne pixbuf.
+Replace the currently-viewed image by the given pixbuf.
 
 =cut
 
 sub set_image {
-   my ($self, $image) = @_;
+   my ($self, $image, $type) = @_;
 
-   $self->{image} = $image;
+   $self->{type}        = $type;
+   $self->{image}       = $image;
+   $self->{tran_rotate} = 0;
 
    $self->set_subimage ($image);
 }
@@ -170,6 +174,8 @@ sub clear_image {
 
    delete $self->{image};
    delete $self->{subimage};
+   delete $self->{tran_rotate};
+   delete $self->{path};
 
    if ($self->{window} && $self->{window}->is_visible) {
       $self->realize_image;
@@ -193,20 +199,39 @@ mplayer supports it).
 
 =cut
 
+my %othertypes = (
+   "Microsoft ASF" => "video/x-asf",
+   "RealMedia file" => "video/x-rm",
+);
+
+my %exttypes = (
+   mpg  => "video/mpeg",
+   mpeg => "video/mpeg",
+);
+
 sub load_image {
    my ($self, $path) = @_;
 
    $self->kill_mplayer;
    $self->force_redraw;
 
-   $self->{path} = $path;
+   my $image;
+   my $type = Gtk2::CV::magic_mime $path;
 
-   my $image = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg $path }
-               || eval { new_from_file Gtk2::Gdk::Pixbuf $path };
+   if ($type =~ /^application\//) {
+      my $magic = Gtk2::CV::magic $path;
+      $type = $othertypes{$magic};
+   }
 
-   if (!$image) {
-      local $@;
+   if (!length $type && $path =~ /\.([^.]+)$/) {
+      $type = $exttypes{lc $1};
+   }
 
+   if ($type eq "image/jpeg") {
+      $image = Gtk2::CV::load_jpeg Glib::filename_from_unicode $path;
+   } elsif ($type =~ /^image\//) {
+      $image = new_from_file Gtk2::Gdk::Pixbuf $path;
+   } elsif ($type =~ /^video\//) {
       $path = "./$path" if $path =~ /^-/;
 
       # try video
@@ -224,6 +249,7 @@ sub load_image {
             #$w = POSIX::ceil $w * 1.33;
          }
 
+         $type = "video";
          $image = new Gtk2::Gdk::Pixbuf "rgb", 0, 8, $w, $h;
          $image->fill ("\0\0\0");
 
@@ -269,18 +295,23 @@ sub load_image {
 
          close $rfh;
       } else {
+         $@ = "mplayer doesn't recognize this '$type' file";
          # probably audio, or a real error
       }
+   } else {
+      $@ = "unrecognized file format '$type'";
    }
 
    if (!$image) {
       warn "$@";
 
+      $type = "error";
       $image = Gtk2::CV::require_image "error.png";
    }
 
    if ($image) {
-      $self->set_image ($image);
+      $self->set_image ($image, $type);
+      $self->{path} = $path;
       $self->set_title ("CV: $path");
    } else {
       $self->clear_image;
@@ -305,7 +336,7 @@ sub check_screen_size {
 sub update_properties {
    my ($self) = @_;
 
-   (undef, undef, @data) = $_[0]->{window}->property_get (
+   (undef, undef, my @data) = $_[0]->{window}->property_get (
       $_[0]{frame_extents_property}, 
       Gtk2::Gdk::Atom->intern ("CARDINAL", 0),
       0, 4*4, 0);
@@ -332,7 +363,7 @@ sub do_realize {
 
    $self->{drag_gc} = Gtk2::Gdk::GC->new ($self->{window});
    $self->{drag_gc}->set_function ('xor');
-   $self->{drag_gc}->set_rgb_foreground (new Gtk2::Gdk::Color 128*257, 128*257, 128*257);
+   $self->{drag_gc}->set_rgb_foreground (new Gtk2::Gdk::Color 0x8000, 0x8000, 0x8000);
    $self->{drag_gc}->set_line_attributes (1, 'solid', 'round', 'miter');
 
    $self->{screen_width}  = $self->{window}->get_screen->get_width;
@@ -630,9 +661,31 @@ sub handle_key {
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{t}) {
          $self->set_subimage (Gtk2::CV::rotate $self->{subimage}, 270);
+         $self->{tran_rotate} += 90;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{T}) {
          $self->set_subimage (Gtk2::CV::rotate $self->{subimage},  90);
+         $self->{tran_rotate} -= 90;
+
+      } elsif ($key == $Gtk2::Gdk::Keysyms{a}) {
+         $self->{path}
+            or die "can only 'a'pply disk-based images";
+
+         $self->{type} eq "jpg"
+            or die "can only 'a'pply jpeg images";
+         
+         my $rot = $self->{tran_rotate} %= 360;
+
+         $rot = $rot ==   0 ? undef
+              : $rot ==  90 ? -9
+              : $rot == 180 ? -1
+              : $rot == 270 ? -2
+              : die "can only rotate by 0, 90, 180 and 270 degrees";
+
+         if ($rot) {
+            system "exiftran", "-i", $rot, $self->{path}
+               and die "exiftran failed: $?";
+         }
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{Escape}
                && $self->{drag_info}) {
@@ -733,7 +786,7 @@ sub redraw {
    $pm->draw_pixbuf ($self->style->white_gc,
                      Gtk2::CV::dealpha $pb,
                      0, 0, 0, 0, $self->{dw}, $self->{dh},
-                     "normal", 0, 0);
+                     "max", 0, 0);
 
    $self->{window}->set_back_pixmap ($pm);
    $self->{window}->clear_area (0, 0, $self->{dw}, $self->{dh});

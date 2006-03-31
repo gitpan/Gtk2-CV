@@ -62,6 +62,7 @@ sub update {
       if (!$self->{window}) {
          $self->{window} = new Gtk2::Window 'toplevel';
          $self->{window}->set (
+            role            => "progress",
             window_position => "mouse",
             accept_focus    => 0,
             focus_on_map    => 0,

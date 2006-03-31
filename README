@@ -99,8 +99,9 @@ DESCRIPTION
      r            set scaling mode to 'nearest' (fastest)
      s            set scaling mode to 'bilinear' (default)
      shift-s      set scaling mode to 'hyper' (slowest)
-     t            rotate clockwise 90Â°
-     T            rotate counterclockwiseÂ°
+     t            rotate clockwise 90°
+     T            rotate counterclockwise°
+     a            apply all rotations loslessly to a jpeg file (using exiftran)
      ctrl-v       open a new visual schnauzer window for the current dir
      ctrl-c       clone the current image window
      ctrl-e       run an editor ($CV_EDITOR or "gimp") on the current image

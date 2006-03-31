@@ -36,7 +36,7 @@ use Glib::Object::Subclass
       popup             => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar, Gtk2::Gdk::Event] },
       popup_selected    => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar] },
       selection_changed => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
-      chpaths           => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
+      chpaths           => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar, Glib::Boolean] },
       chdir             => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
    };
 
@@ -113,7 +113,7 @@ sub img_combine {
       my ($w, $h) = $base->get_size;
       my $pm = new Gtk2::Gdk::Pixmap $base, $w, $h, -1;
       $pm->draw_drawable ($self->style->white_gc, $base, 0, 0, 0, 0, $w, $h);
-      $pm->draw_pixbuf   ($self->style->white_gc, $add , 0, 0, 0, 0, $w, $h, "normal",  0, 0);
+      $pm->draw_pixbuf   ($self->style->white_gc, $add , 0, 0, 0, 0, $w, $h, "max",  0, 0);
 
       $pm
    }
@@ -210,7 +210,7 @@ sub read_thumb($) {
          1 while ($_ = <$p7>) =~ /^#/;
          if (/^(\d+)\s+(\d+)\s+255/) {
             local $/;
-            return [$1, $2, <$p7>];
+            return p7_to_pb $1, $2, <$p7>;
          }
       }
    }
@@ -235,17 +235,17 @@ sub {
 
       mkdir Glib::filename_from_unicode +(dirname $path) . "/.xvpics", 0777;
 
-      my $pb = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg $path, 1 }
+      my $pb = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg Glib::filename_from_unicode $path, 1 }
                || eval { new_from_file Gtk2::Gdk::Pixbuf $path }
                || Gtk2::CV::require_image "error.png";
 
       my ($w, $h) = ($pb->get_width, $pb->get_height);
 
       if ($w * IH > $h * IW) {
-         $h = int $h * IW / $w + 0.5;
+         $h = (int $h * IW / $w + 0.5) || 1;
          $w = IW;
       } else {
-         $w = int $w * IH / $h + 0.5;
+         $w = (int $w * IH / $h + 0.5) || 1;
          $h = IH;
       }
 
@@ -281,14 +281,14 @@ Gtk2::CV::Jobber::define unlink =>
 sub {
    my ($job) = @_;
 
-   if (exists $ENV{CV_TRASHCAN}) {
-      die "CV_TRASHCAN not implemented yet in the job queue system\n";
-#      require File::Copy;
-#      mkdir "$ENV{CV_TRASHCAN}/$1" if $path =~ /^(.*)\//s;
-#      File::Copy::move "$path", "$ENV{CV_TRASHCAN}/$path"
-   } else {
-      $Gtk2::CV::Jobber::jobs{$job->{path}} = { }; # no further jobs make sense
+   $Gtk2::CV::Jobber::jobs{$job->{path}} = { }; # no further jobs make sense
 
+   if (exists $ENV{CV_TRASHCAN}) {
+#      mkdir "$ENV{CV_TRASHCAN}/$1" if $job->{path} =~ /^(.*)\//s;
+      Gtk2::CV::Jobber::submit mv => $job->{path}, $ENV{CV_TRASHCAN};
+
+      $job->finish;
+   } else {
       aio_unlink Glib::filename_from_unicode $job->{path}, sub {
          my $status = shift;
 
@@ -337,8 +337,6 @@ sub {
 
 sub jobber_update {
    my ($self, $job) = @_;
-
-   #warn "got $job->{path}::$job->{type}\n";#d#
 
    # update path => index map for faster access
    unless (exists $self->{map}) {
@@ -396,7 +394,10 @@ sub force_pixmap($$) {
                ? p7_to_pb @{$entry->[3]}
                : $entry->[3];
 
-      $entry->[3] = $pb->render_pixmap_and_mask (0.5);
+      my ($w, $h) = ($entry->[3]->get_width, $entry->[3]->get_height);
+
+      $entry->[3] = new Gtk2::Gdk::Pixmap $self->{window}, $w, $h, -1;
+      $entry->[3]->draw_pixbuf ($self->style->white_gc, $pb, 0, 0, 0, 0, $w, $h, "max",  0, 0);
    } else {
       $entry->[3] = $file_img{ $ext_logo{ extension $entry->[1] } } || $file_img;
    }
@@ -689,7 +690,7 @@ sub INIT_INSTANCE {
 
       $data->set_text (
          join " ",
-            map /[^\x2b-\x7e\xa0-]/ ? do { s/([\x00-\x1f\"\\])/\\$1/g; "\"$_\"" }
+            map /[^\x2b-\x7e\xa0-]/ ? do { s/([\x00-\x1f\"\\!])/\\$1/g; "\"$_\"" }
                                     : $_,
                sort
                   map "$_->[0]/$_->[1]",
@@ -911,6 +912,7 @@ sub cursor_move {
    my ($self, $inc, $time) = @_;
 
    my $cursor = $self->{cursor};
+   my $cursor_prev = $cursor;
 
    if ($self->cursor_valid) {
       $self->clear_selection;
@@ -931,9 +933,8 @@ sub cursor_move {
           ($oldcursor - $self->{offs}) / $self->{cols}) x 2
       );
    } else {
-      $cursor = $self->{cursor};
-
       $self->clear_selection;
+      $cursor_prev = -1;
 
       if (!$cursor) {
          if ($inc < 0) {
@@ -963,6 +964,8 @@ sub cursor_move {
       (($cursor - $self->{offs}) % $self->{cols},
        ($cursor - $self->{offs}) / $self->{cols}) x 2
    );
+
+   $cursor_prev != $cursor
 }
 
 sub clear_cursor {
@@ -1135,11 +1138,12 @@ sub handle_key {
          $self->cursor_move (0) unless $self->cursor_valid;
          $self->emit_activate ($self->{cursor});
       } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
-         $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
+         $self->cursor_move (1) or return 1
+            if $self->{cursor_current} || !$self->cursor_valid;
          $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
          $self->prefetch (1);
       } elsif ($key == $Gtk2::Gdk::Keysyms{BackSpace}) {
-         $self->cursor_move (-1);
+         $self->cursor_move (-1) or return 1;
          $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
          $self->prefetch (-1);
 
@@ -1176,11 +1180,12 @@ sub handle_key {
          $self->cursor_move (0) unless $self->cursor_valid;
          $self->emit_activate ($self->{cursor});
       } elsif ($key == $Gtk2::Gdk::Keysyms{space}) {
-         $self->cursor_move (1) if $self->{cursor_current} || !$self->cursor_valid;
+         $self->cursor_move (1) or return 1
+            if $self->{cursor_current} || !$self->cursor_valid;
          $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
          $self->prefetch (1);
       } elsif ($key == $Gtk2::Gdk::Keysyms{BackSpace}) {
-         $self->cursor_move (-1);
+         $self->cursor_move (-1) or return 1;
          $self->emit_activate ($self->{cursor}) if $self->cursor_valid;
          $self->prefetch (-1);
 
@@ -1225,7 +1230,7 @@ sub invalidate {
 
    $self->{draw}->queue_draw_area (
       $x1 * (IW + IX), $y1 * (IH + IY),
-      ($x2 - $x1) * (IW + IX) + (IW + IX), ($y2 - $y1) * (IH + IY) + (IH + IY),
+      ($x2 - $x1 + 1) * (IW + IX), ($y2 - $y1 + 1) * (IH + IY),
    );
 }
 
@@ -1360,12 +1365,13 @@ sub expose {
 
    return unless @{$self->{entry}};
 
-   my ($x1, $y1, $x2, $y2) = $event->area->values;
+   my ($x1, $y1, $x2, $y2) = $event->area->values; # x y w h
 
    $self->{window}->clear_area ($x1, $y1, $x2, $y2);
 
-   $x2 += $x1 + IW + IX;
-   $y2 += $y1 + IH + IY;
+   $x1 += IX / 2;
+   $x2 += $x1;
+   $y2 += $y1;
    $x1 -= IW + IX;
    $y1 -= IH + IY;
 
@@ -1392,8 +1398,8 @@ sub expose {
 outer:
    for my $y (@y) {
       for my $x (@x) {
-         if ($y >= $y1 && $y < $y2
-             && $x >= $x1 && $x < $x2) {
+         if ($y > $y1 && $y <= $y2
+             && $x > $x1 && $x <= $x2) {
             my $entry = $self->{entry}[$idx];
             my $path = "$entry->[0]/$entry->[1]";
             my $text_gc;
@@ -1437,7 +1443,7 @@ outer:
 
             $self->{window}->draw_layout (
                $text_gc,
-               $x + (IW - $w) *0.5, $y + IH,
+               $x + (IW - $w) * 0.5, $y + IH,
                $layout
             );
          }
@@ -1462,6 +1468,7 @@ sub start_idle_check {
    my ($self) = @_;
 
    return if $self->{idle_check_done};
+   $self->realize;
 #   $self->{inhibit_guard} ||= Gtk2::CV::Jobber::inhibit_guard;
    $self->{idle_check_watcher} ||= add Glib::Idle sub { $self->idle_check }, undef, 500;
 }
@@ -1573,7 +1580,7 @@ sub idle_check {
 }
 
 sub do_chpaths {
-   my ($self, $paths) = @_;
+   my ($self, $paths, $nosort) = @_;
 
    Gtk2::CV::Jobber::inhibit {
       my $base = $self->{dir};
@@ -1592,6 +1599,8 @@ sub do_chpaths {
       my %xvpics;
       my $leaves = -1;
 
+      my $order = $paths;
+
       if (defined $base) {
          $leaves = (stat $base)[3];
          $leaves -= 2; # . and ..
@@ -1604,7 +1613,7 @@ sub do_chpaths {
          # try stat'ing entries that look like directories first
          my (@d, @f);
          for (@$paths) {
-            $_->[1] =~ /\./ ? push @f, $_ : push @d, $_
+            $_->[1] =~ /.\./ ? push @f, $_ : push @d, $_
          }
 
          push @d, @f;
@@ -1659,11 +1668,18 @@ sub do_chpaths {
 
       $progress->set_title ("sorting...");
 
-      for (\@d, \@f) {
-         @$_ = map $_->[1],
-                    sort { $a->[0] cmp $b->[0] }
-                       map [foldcase $_->[1], $_],
-                           @$_;
+      if ($nosort) {
+         for (\@d, \@f) {
+            my %h = map +("$_->[0]/$_->[1]" => $_), @$_;
+            @$_ = grep $_, map $h{"$_->[0]/$_->[1]"}, @$order;
+         }
+      } else {
+         for (\@d, \@f) {
+            @$_ = map $_->[1],
+                       sort { $a->[0] cmp $b->[0] }
+                          map [foldcase $_->[1], $_],
+                              @$_;
+         }
       }
 
       $self->{entry} = [@d, @f];
@@ -1696,7 +1712,7 @@ sub do_chpaths {
 }
 
 sub set_paths {
-   my ($self, $paths) = @_;
+   my ($self, $paths, $nosort) = @_;
 
    $paths = [
       map /^(.*)\/([^\/]*)$/s
@@ -1706,7 +1722,7 @@ sub set_paths {
    ];
  
    delete $self->{dir};
-   $self->signal_emit (chpaths => $paths);
+   $self->signal_emit (chpaths => $paths, $nosort);
 
    $self->window->property_delete (Gtk2::Gdk::Atom->intern ("_X_CWD", 0))
       if $self->window;
@@ -1731,7 +1747,7 @@ sub do_chdir {
    );
 
    $self->{dir} = $dir;
-   $self->signal_emit (chpaths => [map eval { [$dir, Glib::filename_to_unicode $_] }, readdir $fh]);
+   $self->signal_emit (chpaths => [map eval { [$dir, Glib::filename_to_unicode $_] }, readdir $fh], 0);
 }
 
 =item $schnauzer->set_dir ($path)

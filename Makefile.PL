@@ -1,11 +1,22 @@
 require 5.008;
 
+print <<EOF;
+
+**
+** If you get any errors, make sure you have libmagic (from "file"),
+** libjpeg, Gtk2 and Glib. On debian, this should get you there:
+** 
+** apt-get install libmagic-dec libjpeg62-dev libglib-perl libgtk2-perl
+**
+
+EOF
+
 use ExtUtils::MakeMaker;
 use ExtUtils::Depends;
 
 my $pkg = new ExtUtils::Depends ("Gtk2::CV");
 
-$pkg->set_libs ("-ljpeg");
+$pkg->set_libs ("-ljpeg -lmagic");
 $pkg->add_deps ("Gtk2", "Glib");
 
 sub MY::postamble {

@@ -30,6 +30,8 @@ Global variable containing all jobs, indexed by full path.
 our %jobs;
 our @jobs; # global job order
 
+my %in_progress;
+
 my %type;
 my @type; # type order
 
@@ -53,13 +55,15 @@ my %class_limit = (
 my $progress;
 
 sub scheduler {
-   return if $disabled;
-
 job:
-   while (@jobs) {
-      my $path = $jobs[-1];
-      my $types = $jobs{$path};
+   for my $idx (1 .. (@jobs < 10 ? @jobs : 10)) {
+      return if $disabled;
 
+      my $path = $jobs[-$idx];
+
+      next if $in_progress{$path};
+      
+      my $types = $jobs{$path};
       my @types = keys %$types;
 
       if (@types) {
@@ -68,25 +72,30 @@ job:
 
             my $class = $type{$type}{class};
 
-            return unless $class_limit{$class};
-            $class_limit{$class}--;
+            if ($class_limit{$class}) {
+               $class_limit{$class}--;
 
-            my $job = bless delete $types->{$type}, Gtk2::CV::Jobber::Job;
+               my $job = bless delete $types->{$type}, Gtk2::CV::Jobber::Job;
 
-            $job->{path} = $path;
-            $job->{type} = $type;
+               $job->{path} = $path;
+               $job->{type} = $type;
 
-            $job->run;
+               $job->run;
+            }
 
             next job;
          }
 
          die "FATAL: unknown job type <@types> encountered, aborting.\n";
       } else {
-         delete $jobs{pop @jobs}
+         delete $jobs{splice @jobs, -$idx, 1, ()}
             and $progress->increment;
+
+         goto job;
       }
    }
+
+   return if @jobs;
 
    undef $progress;
 

@@ -1,5 +1,24 @@
 TODO/FIXME: pixmap-bg-trick sometimes doesn't work (race?)
+TODO/FIXME: remove event does not recalculate schanuzer content size
+TODO: with manual placement, initial contents aren't displayed
 TODO: rename, mass-rename
+TODO: update a file that has been removed etc.
+
+1.2  Fri Mar 31 12:55:15 CEST 2006
+	- fix unnecessarily redraws on partial exposes (scrolling etc).
+        - fixed CV_TRASHCAN support.
+        - "a" calls exiftran to rotate the image on-disk.
+        - don't run jobs on the same file in parallel.
+        - filenames were sometiems encoded twice when loading xvpics.
+        - do not sort filenames given on the commandline.
+        - set dithering to 'max', as contrary to documentation 'normal'
+          doesn't dither on (my) 8-bit-displays.
+        - enable dithering for xvpics.
+        - use libmagic for filetype detection.
+        - set window roles.
+        - changed xor color from 0x8080 PC to 0x8000, as the former yields
+          useless results on gtk 2.8.
+        - fix p7 thumbnail reading.
 
 1.1  Fri Oct 28 15:47:53 CEST 2005
 	- jobs for files currently shown in a schnauzer get prioritised.

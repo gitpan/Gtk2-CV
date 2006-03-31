@@ -1,6 +1,7 @@
 package Gtk2::CV::Plugin::NameCluster;
 
-use Glib::Object::Subclass Gtk2::Window;
+use Glib::Object::Subclass
+   'Gtk2::Window';
 
 use Gtk2::SimpleList;
 
@@ -12,6 +13,7 @@ sub INIT_INSTANCE {
    my ($self) = @_;
 
    $self->set_default_size (250, 500);
+   $self->set_role ("group view");
 
    $self->add (my $sw = new Gtk2::ScrolledWindow);
    $sw->add (

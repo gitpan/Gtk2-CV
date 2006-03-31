@@ -4,6 +4,9 @@
 
 #include <string.h>
 #include <setjmp.h>
+#include <math.h>
+
+#include <magic.h>
 
 #include <jpeglib.h>
 #include <glib.h>
@@ -13,8 +16,8 @@
 #include <gperl.h>
 #include <gtk2perl.h>
 
-#define IW 80 /* MUST match Schnauer.pm! */
-#define IH 60 /* MUST match Schnauer.pm! */
+#define IW 80 /* MUST match Schnauzer.pm! */
+#define IH 60 /* MUST match Schnauzer.pm! */
 
 #define RAND (seed = (seed + 7141) * 54773 % 134456)
 
@@ -145,6 +148,48 @@ common_prefix_length (a, b)
         OUTPUT:
         RETVAL
 
+const char *
+magic (const char *path)
+	CODE:
+{
+	static magic_t cookie;
+
+        if (!cookie)
+          {
+            cookie = magic_open (MAGIC_NONE);
+
+            if (cookie)
+              magic_load (cookie, 0);
+            else
+              XSRETURN_UNDEF;
+          }
+
+        RETVAL = magic_file (cookie, path);
+}
+	OUTPUT:
+        RETVAL
+
+const char *
+magic_mime (const char *path)
+	CODE:
+{
+	static magic_t cookie;
+
+        if (!cookie)
+          {
+            cookie = magic_open (MAGIC_MIME);
+
+            if (cookie)
+              magic_load (cookie, 0);
+            else
+              XSRETURN_UNDEF;
+          }
+
+        RETVAL = magic_file (cookie, path);
+}
+	OUTPUT:
+        RETVAL
+
 # missing in Gtk2 perl module
 
 gboolean
@@ -203,13 +248,10 @@ load_jpeg (SV *path, int thumbnail=0)
         int rs;
         FILE *fp;
         volatile GdkPixbuf *pb = 0;
-        gchar *filename;
 
         RETVAL = 0;
 
-        filename = g_filename_from_utf8 (SvPVutf8_nolen (path), -1, 0, 0, 0);
-        fp = fopen (filename, "rb");
-        g_free (filename);
+        fp = fopen (SvPVbyte_nolen (path), "rb");
 
         if (!fp)
           XSRETURN_UNDEF;
@@ -291,6 +333,50 @@ load_jpeg (SV *path, int thumbnail=0)
 }
 	OUTPUT:
         RETVAL
+
+void
+compare (GdkPixbuf *a, GdkPixbuf *b)
+	PPCODE:
+{
+	int w  = gdk_pixbuf_get_width  (a);
+	int h  = gdk_pixbuf_get_height (a);
+        int sa = gdk_pixbuf_get_rowstride (a);
+        int sb = gdk_pixbuf_get_rowstride (b);
+
+        guchar *pa = gdk_pixbuf_get_pixels (a);
+        guchar *pb = gdk_pixbuf_get_pixels (b);
+
+	int x, y;
+
+        assert (w == gdk_pixbuf_get_width  (b));
+        assert (h == gdk_pixbuf_get_height (b));
+
+        assert (gdk_pixbuf_get_n_channels (a) == 3);
+        assert (gdk_pixbuf_get_n_channels (b) == 3);
+
+        double diff = 0.;
+        int peak = 0;
+
+        if (w && h)
+          for (y = 0; y < h; y++)
+            {
+              guchar *pa_ = pa + y * sa;
+              guchar *pb_ = pb + y * sb;
+
+              for (x = 0; x < w; x++)
+                {
+                  int d;
+
+                  d = ((int)*pa_++) - ((int)*pb_++); diff += d*d; peak = MAX (peak, abs (d));
+                  d = ((int)*pa_++) - ((int)*pb_++); diff += d*d; peak = MAX (peak, abs (d));
+                  d = ((int)*pa_++) - ((int)*pb_++); diff += d*d; peak = MAX (peak, abs (d));
+                }
+            }
+
+        EXTEND (SP, 2);
+        PUSHs (sv_2mortal (newSVnv (sqrt (diff / (w * h * 3. * 255. * 255.)))));
+        PUSHs (sv_2mortal (newSVnv (peak / 255.)));
+}
 
 #############################################################################
 

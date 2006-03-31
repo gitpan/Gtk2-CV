@@ -105,6 +105,7 @@ sub std_keys {
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{v}) {
       my $w = new Gtk2::Window;
 
+      $w->set_role ("schnauzer");
       $w->set_title ("CV: Schnauzer");
       $w->add (my $s = new_schnauzer);
       $s->set_dir (File::Spec->curdir);
@@ -116,6 +117,7 @@ sub std_keys {
          require Gtk2::PodViewer;
 
          $help = new Gtk2::Window;
+         $help->set_role ("help");
          $help->set_title ("CV: Help");
          $help->set_default_size (500, 300);
          $help->signal_connect (delete_event => sub { $help->hide; 1 });
@@ -142,6 +144,7 @@ sub std_keys {
    $schnauzer = new_schnauzer;
 
    $mainwin = new Gtk2::Window;
+   $mainwin->set_role ("main");
    $mainwin->set_title ("CV");
    $mainwin->add (my $vbox = new Gtk2::VBox);
    $mainwin->signal_connect (delete_event => sub { $mainwin->hide; 1 });
@@ -161,7 +164,7 @@ sub std_keys {
 if (@ARGV) {
    @ARGV == 1 && -d $ARGV[0]
       ? $schnauzer->set_dir (Glib::filename_to_unicode shift)
-      : $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV]);
+      : $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV], 1);
    $schnauzer->show_all;
    $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
 } else {
@@ -298,6 +301,7 @@ You can use the following keys in the image window:
  shift-s      set scaling mode to 'hyper' (slowest)
  t            rotate clockwise 90°
  T            rotate counterclockwise°
+ a            apply all rotations loslessly to a jpeg file (using exiftran)
  ctrl-v       open a new visual schnauzer window for the current dir
  ctrl-c       clone the current image window
  ctrl-e       run an editor ($CV_EDITOR or "gimp") on the current image
