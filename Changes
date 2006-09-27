@@ -1,8 +1,19 @@
+TODO/FIXME: .ogm support is a must
 TODO/FIXME: pixmap-bg-trick sometimes doesn't work (race?)
 TODO/FIXME: remove event does not recalculate schanuzer content size
 TODO: with manual placement, initial contents aren't displayed
 TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
+TODO: cv file => rescan => 0 byte size if file no longer exists
+
+1.3  Wed Sep 27 23:59:27 CEST 2006
+	- simplify redraw, avoid unnecessary schnauzer redraws.
+        - add rotate entries to the schnauzer menu, adapted
+          from a patch by Corris Randall.
+        - use new experimental (but much faster) clustering feature vector
+          based on moments and not on a histogram.
+        - reimplement file movement to use IO::AIO natively, thus much faster
+          and lower on resources.
 
 1.2  Fri Mar 31 12:55:15 CEST 2006
 	- fix unnecessarily redraws on partial exposes (scrolling etc).

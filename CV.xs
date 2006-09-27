@@ -70,6 +70,61 @@ rgb_to_hsv (unsigned int  r, unsigned int  g, unsigned int  b,
     }
 }
 
+struct feature {
+  float v1, v2, v3; // mean, square, cube
+  int n;
+};
+
+static void
+feature_init (struct feature *f)
+{
+  f->v1 = 0.;
+  f->v2 = 0.;
+  f->v3 = 0.;
+  f->n  = 0;
+}
+
+// didn't find an algorithm to neatly do mean, variance and skew in one pass.
+// elmex ist schuld.
+static void
+feature_update_pass_1 (struct feature *f, unsigned int v)
+{
+  f->v1 += v;
+  f->n  += 1;
+}
+
+static void
+feature_finish_pass_1 (struct feature *f)
+{
+  if (f->n < 1)
+    return;
+
+  f->v1 /= f->n;
+}
+
+static void
+feature_update_pass_2 (struct feature *f, unsigned int v)
+{
+  float d = v - f->v1;
+
+  f->v2 += d * d;
+  f->v3 += d * d * d;
+}
+
+static void
+feature_finish_pass_2 (struct feature *f)
+{
+  if (f->n < 1)
+    return;
+
+  f->v2 /= f->n;
+  f->v3 /= f->n;
+
+  f->v1 /= 255.;
+  f->v2 /= 255. * 255.;        f->v2 = sqrtf (f->v2);
+  f->v3 /= 255. * 255. * 255.; f->v3 = powf (fabsf (f->v3), 1./3.);
+}
+
 static guint32 a85_val;
 static guint a85_cnt;
 static guchar a85_buf[LINELENGTH], *a85_ptr;
@@ -588,50 +643,77 @@ hv84_to_av (unsigned char *hv84)
 MODULE = Gtk2::CV PACKAGE = Gtk2::CV::Plugin::RCluster
 
 SV *
-make_histograms (SV *ar)
-        CODE:
+extract_features (SV *ar)
+	CODE:
 {
         int i;
         AV *av, *result;
 
         if (!SvROK (ar) || SvTYPE (SvRV (ar)) != SVt_PVAV)
-          croak ("Not an array ref as first argument to make_histogram");
+          croak ("Not an array ref as first argument to extract_features");
 
         av = (AV *) SvRV (ar);
         result = newAV ();
 
         for (i = 0; i <= av_len (av); ++i)
           {
-            const int HISTSIZE = 64;
-
-            int j;
             SV *sv = *av_fetch (av, i, 1);
-            STRLEN len;
-            char *buf = SvPVbyte (sv, len);
+            SV *histsv = newSV (9 * sizeof (float) + 1);
 
-            int tmphist[HISTSIZE];
-            float *hist;
-
-            SV *histsv = newSV (HISTSIZE * sizeof (float) + 1);
             SvPOK_on (histsv);
-            SvCUR_set (histsv, HISTSIZE * sizeof (float));
-            hist = (float *)SvPVX (histsv);
+            SvCUR_set (histsv, 9 * sizeof (float));
+            float *hist = (float *)SvPVX (histsv);
 
-            Zero (tmphist, sizeof (tmphist), char);
+            struct feature f_h, f_s, f_v;
+            feature_init (&f_h);
+            feature_init (&f_s);
+            feature_init (&f_v);
 
-            for (j = len; j--; )
-              {
-                unsigned int idx
-                    = ((*buf & 0xc0) >> 2)
-                    | ((*buf & 0x18) >> 1)
-                    |  (*buf & 0x03);
+            {
+              STRLEN len;
+              unsigned char *buf = (unsigned char *)SvPVbyte (sv, len);
+              while (len >= 3)
+                {
+                  unsigned int r, g, b, h, s, v;
+                  r = *buf++; g = *buf++; b = *buf++;
+                  rgb_to_hsv (r, g, b, &h, &s, &v);
 
-                ++tmphist[idx];
-                ++buf;
-              }
-            
-            for (j = 0; j < HISTSIZE; ++j)
-              hist[j] = (float)tmphist[j] / (len + 1e-30);
+                  feature_update_pass_1 (&f_h, h);
+                  feature_update_pass_1 (&f_s, s);
+                  feature_update_pass_1 (&f_v, v);
+
+                  len -= 3;
+                }
+
+              feature_finish_pass_1 (&f_h);
+              feature_finish_pass_1 (&f_s);
+              feature_finish_pass_1 (&f_v);
+            }
+
+            {
+              STRLEN len;
+              unsigned char *buf = (unsigned char *)SvPVbyte (sv, len);
+              while (len >= 3)
+                {
+                  unsigned int r, g, b, h, s, v;
+                  r = *buf++; g = *buf++; b = *buf++;
+                  rgb_to_hsv (r, g, b, &h, &s, &v);
+
+                  feature_update_pass_2 (&f_h, h);
+                  feature_update_pass_2 (&f_s, s);
+                  feature_update_pass_2 (&f_v, v);
+
+                  len -= 3;
+                }
+
+              feature_finish_pass_2 (&f_h);
+              feature_finish_pass_2 (&f_s);
+              feature_finish_pass_2 (&f_v);
+            }
+
+            hist [0] = f_h.v1 * 2.; hist [1] = f_h.v2 * 2.; hist [2] = f_h.v3 * 2.;
+            hist [3] = f_s.v1     ; hist [4] = f_s.v2     ; hist [5] = f_s.v3     ;
+            hist [6] = f_v.v1 * .5; hist [7] = f_v.v2 * .5; hist [8] = f_v.v3 * .5;
 
             av_push (result, histsv);
           }
@@ -640,5 +722,4 @@ make_histograms (SV *ar)
 }
         OUTPUT:
         RETVAL
-
 

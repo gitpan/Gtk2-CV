@@ -2,13 +2,16 @@ package Gtk2::CV::Plugin::RCluster;
 
 use strict;
 
+use File::Temp;
+
 use Gtk2::CV;
 use Gtk2::CV::Plugin;
 
 sub clusterise {
    my ($pics) = @_;
 
-   my $hists = make_histograms $pics;
+   #my $hists = make_histograms $pics;
+   my $hists = extract_features $pics;
 
    my ($fh, $datafile) = File::Temp::tempfile;
       for (0 .. $#$hists) {

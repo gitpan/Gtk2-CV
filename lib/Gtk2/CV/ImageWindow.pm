@@ -200,7 +200,7 @@ mplayer supports it).
 =cut
 
 my %othertypes = (
-   "Microsoft ASF" => "video/x-asf",
+   "Microsoft ASF"  => "video/x-asf",
    "RealMedia file" => "video/x-rm",
 );
 
@@ -671,8 +671,8 @@ sub handle_key {
          $self->{path}
             or die "can only 'a'pply disk-based images";
 
-         $self->{type} eq "jpg"
-            or die "can only 'a'pply jpeg images";
+         $self->{type} eq "image/jpeg"
+            or die "image ahs type '%self->{type}', but I can only 'a'pply jpeg images";
          
          my $rot = $self->{tran_rotate} %= 360;
 

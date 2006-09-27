@@ -44,11 +44,12 @@ use List::Util qw(min max);
 
 use File::Spec;
 use File::Copy;
-use File::Temp;
 use Cwd ();
 
 use POSIX qw(ceil ENOTDIR _exit strftime);
 
+use Encode ();
+use Errno ();
 use Fcntl;
 use IO::AIO;
 
@@ -191,9 +192,9 @@ sub xvpic($) {
 }
 
 sub dirname($) {
-   $_[0] =~ m%^(.*)/[^/]+%sm
-      ? $1
-      : $curdir
+   $_[0] =~ m%^(.*)/([^/]+)%sm
+      ? wantarray ? ($1     , $2   ) : $1
+      : wantarray ? ($curdir, $_[0]) : $curdir
 }
 
 # filename => extension
@@ -217,6 +218,41 @@ sub read_thumb($) {
 
    ();
 }
+
+# rotate a file
+Gtk2::CV::Jobber::define rotate =>
+   pri   => -1000,
+   read  => 1,
+   fork  => 1,
+sub {
+   my ($job) = @_;
+   my $path = $job->{path};
+   my $degrees = $job->{data};
+
+   delete $job->{data};
+
+   eval {
+      die "can only rotate regular files"
+         unless Fcntl::S_ISREG ($job->{stat}[2]);
+
+      my $rot = $degrees %= 360;
+
+      $rot = $rot eq "auto" ? -a
+           : $rot ==   0    ? undef
+           : $rot ==  90    ? -9
+           : $rot == 180    ? -1
+           : $rot == 270    ? -2
+           : die "can only rotate by 0, 90, 180 and 270 degrees";
+
+      if ($rot) {
+         system "exiftran", "-ip", $rot, Glib::filename_from_unicode $path
+            and die "exiftran failed: $?";
+      }
+
+   };
+
+   $job->finish;
+};
 
 # generate a thumbnail for a file
 Gtk2::CV::Jobber::define gen_thumb =>
@@ -317,22 +353,57 @@ sub {
 
 Gtk2::CV::Jobber::define mv =>
    pri   => -2000,
-   stat  => 1,
    class => "read",
-   fork  => 1,
 sub {
    my ($job) = @_;
-   my $path = $job->{path};
-   my $dest = $job->{data};
+   my $src = Glib::filename_from_unicode $job->{path};
+   my $dst = Glib::filename_from_unicode $job->{data};
+   
+   #TODO: move directories, too
 
-   # TODO: don't use /bin/mv and generate create events.
-   system "/bin/mv", "-v", "-b", Glib::filename_from_unicode       $path, Glib::filename_from_unicode "$dest/.";
-   system "/bin/mv",       "-b", Glib::filename_from_unicode xvpic $path, Glib::filename_from_unicode "$dest/.xvpics/."
-      if -e Glib::filename_from_unicode xvpic $path;
-   $job->event (unlink => $path);
+   aio_stat $dst, sub {
+      $dst .= "/" . (dirname $src)[1] if -d _;
+
+      my $basedst = $dst;
+      my $idx = 0;
+
+      my $try_open; $try_open = sub {
+         aio_open $dst, O_WRONLY | O_CREAT | O_EXCL, 0200, sub {
+            if (my $fh = $_[0]) {
+               aio_move $src, $dst, sub {
+                  if ($_[0]) {
+                     my $errno = "$!";
+                     close $fh;
+                     aio_unlink $dst, sub {
+                        print "$src => $dst [ERROR $errno]\n";
+                        $job->finish;
+                     };
+                  } else {
+                     $job->event (unlink => $src);
+                     $job->event (create => $dst);
+                     aio_move xvpic $src, xvpic $dst, sub {
+                        # we do not care about the xvpic being copied correctly
+                        print "$src => $dst\n";
+                        $job->finish;
+                     };
+                  }
+               };
+            } else {
+               $dst = sprintf "%s-%03d", $basedst, $idx++;
+               $try_open->();
+            }
+         };
+      };
+
+      $try_open->();
+   };
+
+#   # TODO: don't use /bin/mv and generate create events.
+#   system "/bin/mv", "-v", "-b", Glib::filename_from_unicode       $path, Glib::filename_from_unicode "$dest/.";
+#   system "/bin/mv",       "-b", Glib::filename_from_unicode xvpic $path, Glib::filename_from_unicode "$dest/.xvpics/."
+#      if -e Glib::filename_from_unicode xvpic $path;
+#   $job->event (unlink => $src);
 #   $job->event (create => $dest);
-
-   $job->finish;
 };
 
 sub jobber_update {
@@ -378,6 +449,9 @@ sub jobber_update {
             $_->[2] &= ~(F_HASPM | F_HASXVPIC);
             $_->[3] = undef;
          }
+      } elsif ( $job->{type} eq "rotate" ) {
+        Gtk2::CV::Jobber::submit gen_thumb => "$job->{path}"
+           if $self->{entry}[$idx][2] & F_HASXVPIC;
       }
 
       $self->draw_entry ($idx);
@@ -394,7 +468,7 @@ sub force_pixmap($$) {
                ? p7_to_pb @{$entry->[3]}
                : $entry->[3];
 
-      my ($w, $h) = ($entry->[3]->get_width, $entry->[3]->get_height);
+      my ($w, $h) = ($pb->get_width, $pb->get_height);
 
       $entry->[3] = new Gtk2::Gdk::Pixmap $self->{window}, $w, $h, -1;
       $entry->[3]->draw_pixbuf ($self->style->white_gc, $pb, 0, 0, 0, 0, $w, $h, "max",  0, 0);
@@ -690,7 +764,7 @@ sub INIT_INSTANCE {
 
       $data->set_text (
          join " ",
-            map /[^\x2b-\x7e\xa0-]/ ? do { s/([\x00-\x1f\"\\!])/\\$1/g; "\"$_\"" }
+            map /[^\x2b-\x39\x3d\x40-\x5a\x5e-\x5f\x61-\x7a\xa0-]/ ? do { s/([\x00-\x1f\"\\!])/\\$1/g; "\"$_\"" }
                                     : $_,
                sort
                   map "$_->[0]/$_->[1]",
@@ -811,6 +885,17 @@ sub emit_popup {
       $del->append (my $item = new Gtk2::MenuItem "Physically (Ctrl-D)");
       $item->signal_connect (activate => sub { $self->unlink (@sel) });
 
+      $sel->append (my $item = new Gtk2::MenuItem "Rotate");
+      $item->set_submenu (my $rotate = new Gtk2::Menu);
+      $rotate->append (my $item = new Gtk2::MenuItem "90 clockwise");
+      $item->signal_connect (activate => sub { $self->rotate (90, @sel) });
+      $rotate->append (my $item = new Gtk2::MenuItem "90 counter-clockwise");
+      $item->signal_connect (activate => sub { $self->rotate (270, @sel) });
+      $rotate->append (my $item = new Gtk2::MenuItem "180");
+      $item->signal_connect (activate => sub { $self->rotate (180, @sel) });
+      $rotate->append (my $item = new Gtk2::MenuItem "automatic (exif orientation tag)");
+      $item->signal_connect (activate => sub { $self->rotate ("auto", @sel) });
+		
       $self->signal_emit (popup_selected => $menu, \@sel);
    }
 
@@ -827,11 +912,13 @@ sub emit_popup {
       $cnt{Gtk2::CV::common_prefix_length $name, $self->{entry}[$_][1]}++
          for (max 0, $idx - FAST_RANGE) .. min ($idx + FAST_RANGE, $#{$self->{entry}});
 
+      my $sum = 0;
       for my $len (reverse 1 .. -2 + length $entry->[1]) {
          my $cnt = $cnt{$len}
             or next;
+         $sum += $cnt;
          my $pfx = substr $entry->[1], 0, $len;
-         $by_pfx->append (my $item = new Gtk2::MenuItem "$pfx*\t($cnt)");
+         $by_pfx->append (my $item = new Gtk2::MenuItem "$pfx*\t($sum)");
          $item->signal_connect (activate => sub {
             delete $self->{sel};
 
@@ -993,6 +1080,27 @@ sub get_selection {
    my ($self) = @_;
 
    $self->{sel};
+}
+
+=item $schnauzer->rotate( degrees, idx[, idx...])
+
+Rotate the raw images on the given entries.
+
+=cut
+
+sub rotate {
+   my ($self, $degrees, @idx) = @_;
+
+   Gtk2::CV::Jobber::inhibit {
+      for (sort { $b <=> $a } @idx) {
+         my $e = $self->{entry}[$_];
+         Gtk2::CV::Jobber::submit rotate => "$e->[0]/$e->[1]", $degrees;
+         delete $self->{sel}{$_};
+      }
+
+      $self->invalidate_all;
+      $self->emit_sel_changed;
+   };
 }
 
 =item $schnauzer->generate_thumbnails (idx[, idx...])
@@ -1369,14 +1477,14 @@ sub expose {
 
    $self->{window}->clear_area ($x1, $y1, $x2, $y2);
 
-   $x1 += IX / 2;
    $x2 += $x1;
    $y2 += $y1;
+
    $x1 -= IW + IX;
    $y1 -= IH + IY;
 
-   my @x = map $_ * (IW + IX) + IX / 2, 0 .. $self->{cols} - 1;
-   my @y = map $_ * (IH + IY)         , 0 .. $self->{page} - 1;
+   my @x = map $_ * (IW + IX), 0 .. $self->{cols} - 1;
+   my @y = map $_ * (IH + IY), 0 .. $self->{page} - 1;
 
    # 'orrible, why do they deprecate _convinience_ functions? :(
    my $context = $self->get_pango_context;
@@ -1398,8 +1506,8 @@ sub expose {
 outer:
    for my $y (@y) {
       for my $x (@x) {
-         if ($y > $y1 && $y <= $y2
-             && $x > $x1 && $x <= $x2) {
+         if ($y > $y1 && $y < $y2
+             && $x > $x1 && $x < $x2) {
             my $entry = $self->{entry}[$idx];
             my $path = "$entry->[0]/$entry->[1]";
             my $text_gc;
@@ -1410,7 +1518,7 @@ outer:
             # selected?
             if (exists $self->{sel}{$idx}) {
                $self->{window}->draw_rectangle ($self->style->black_gc, 1,
-                       $x - IX * 0.5, $y, IW + IX, IH + IY);
+                       $x, $y, IW + IX, IH + IY);
                $text_gc = $self->style->white_gc;
             } else {
                $text_gc = $self->style->black_gc;
@@ -1418,7 +1526,7 @@ outer:
 
             if (exists $Gtk2::CV::Jobber::jobs{"$entry->[0]/$entry->[1]"}) {
                $self->{window}->draw_rectangle ($self->style->dark_gc ('normal'), 1,
-                       $x - IX * 0.4, $y, IW + IX * 0.8, IH);
+                       $x + IX * 0.1, $y, IW + IX * 0.8, IH);
             }
 
             # pre-render thumb into pixmap
@@ -1434,8 +1542,8 @@ outer:
             $self->{window}->draw_drawable ($self->style->white_gc,
                      $pm,
                      0, 0,
-                     $x + (IW - $pw) * 0.5,
-                     $y + (IH - $ph) * 0.5,
+                     $x + (IX + IW - $pw) * 0.5,
+                     $y + (     IH - $ph) * 0.5,
                      $pw, $ph);
 
             $layout->set_text ($entry->[1]);
@@ -1443,7 +1551,7 @@ outer:
 
             $self->{window}->draw_layout (
                $text_gc,
-               $x + (IW - $w) * 0.5, $y + IH,
+               $x + (IX + IW - $w) * 0.5, $y + IH,
                $layout
             );
          }

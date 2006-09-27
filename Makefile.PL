@@ -6,7 +6,7 @@ print <<EOF;
 ** If you get any errors, make sure you have libmagic (from "file"),
 ** libjpeg, Gtk2 and Glib. On debian, this should get you there:
 ** 
-** apt-get install libmagic-dec libjpeg62-dev libglib-perl libgtk2-perl
+** apt-get install libmagic-dev libjpeg62-dev libglib-perl libgtk2-perl
 **
 
 EOF
@@ -42,7 +42,7 @@ WriteMakefile(
 		    Gtk2		=> 1.08,
 		    Gtk2::PodViewer	=> 0.03,
 		    Gtk2::GladeXML      => 0.93,
-		    IO::AIO             => 1.4,
+		    IO::AIO             => 1.8,
 		   },
     DIR		=> [],
     NAME	=> 'Gtk2::CV',
