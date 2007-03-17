@@ -6,6 +6,8 @@ print <<EOF;
 ** If you get any errors, make sure you have libmagic (from "file"),
 ** libjpeg, Gtk2 and Glib. On debian, this should get you there:
 ** 
+** apt-get install libextutils-depends-perl
+** apt-get install libgtk2-podviewer-perl libgtk2-gladexml-perl
 ** apt-get install libmagic-dev libjpeg62-dev libglib-perl libgtk2-perl
 **
 
@@ -42,7 +44,7 @@ WriteMakefile(
 		    Gtk2		=> 1.08,
 		    Gtk2::PodViewer	=> 0.03,
 		    Gtk2::GladeXML      => 0.93,
-		    IO::AIO             => 1.8,
+		    IO::AIO             => 2.2,
 		   },
     DIR		=> [],
     NAME	=> 'Gtk2::CV',
@@ -73,6 +75,7 @@ WriteMakefile(
        'images/dir-symlink.png'			=> '$(INST_LIBDIR)/CV/images/dir-symlink.png',
        'images/file.png'			=> '$(INST_LIBDIR)/CV/images/file.png',
        'images/file-avi.png'			=> '$(INST_LIBDIR)/CV/images/file-avi.png',
+       'images/file-ogm.png'			=> '$(INST_LIBDIR)/CV/images/file-ogm.png',
        'images/file-tif.png'			=> '$(INST_LIBDIR)/CV/images/file-tif.png',
        'images/file-gif.png'			=> '$(INST_LIBDIR)/CV/images/file-gif.png',
        'images/file-jpeg.png'			=> '$(INST_LIBDIR)/CV/images/file-jpeg.png',

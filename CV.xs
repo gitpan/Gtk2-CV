@@ -245,7 +245,12 @@ magic_mime (const char *path)
 	OUTPUT:
         RETVAL
 
-# missing in Gtk2 perl module
+# missing/broken in Gtk2 perl module
+
+void
+gdk_window_clear_hints (GdkWindow *window)
+	CODE:
+        gdk_window_set_geometry_hints (window, 0, 0);
 
 gboolean
 gdk_net_wm_supports (GdkAtom property)

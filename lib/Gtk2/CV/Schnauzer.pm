@@ -36,7 +36,7 @@ use Glib::Object::Subclass
       popup             => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar, Gtk2::Gdk::Event] },
       popup_selected    => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar] },
       selection_changed => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
-      chpaths           => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar, Glib::Boolean] },
+      chpaths           => { flags => [qw/run-first/], return_type => undef, param_types => [] },
       chdir             => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
    };
 
@@ -123,12 +123,17 @@ sub img_combine {
 my %ext_logo = (
    jpeg => "jpeg",
    jfif => "jpeg",
+   jp2  => "jpeg",
+   jpc  => "jpeg",
    jpg  => "jpeg",
    jpe  => "jpeg",
    png  => "png",
    gif  => "gif",
    tif  => "tif",
    tiff => "tif",
+
+   mp2  => "mp2",
+   mp3  => "mp3",
 
    mpeg => "mpeg",
    mpg  => "mpeg",
@@ -138,9 +143,12 @@ my %ext_logo = (
    m1v  => "mpeg",
    mp4  => "mpeg",
    
+   ogm  => "ogm",
+
    mov  => "mov",
    qt   => "mov",
 
+   divx => "avi",
    avi  => "avi",
    wmv  => "wmv",
    asf  => "asf",
@@ -227,7 +235,7 @@ Gtk2::CV::Jobber::define rotate =>
 sub {
    my ($job) = @_;
    my $path = $job->{path};
-   my $degrees = $job->{data};
+   my $rot = $job->{data};
 
    delete $job->{data};
 
@@ -235,20 +243,17 @@ sub {
       die "can only rotate regular files"
          unless Fcntl::S_ISREG ($job->{stat}[2]);
 
-      my $rot = $degrees %= 360;
-
-      $rot = $rot eq "auto" ? -a
-           : $rot ==   0    ? undef
-           : $rot ==  90    ? -9
-           : $rot == 180    ? -1
-           : $rot == 270    ? -2
+      $rot = $rot eq "auto"      ? -a
+           : ($rot % 360) ==   0 ? undef
+           : ($rot % 360) ==  90 ? -9
+           : ($rot % 360) == 180 ? -1
+           : ($rot % 360) == 270 ? -2
            : die "can only rotate by 0, 90, 180 and 270 degrees";
 
       if ($rot) {
          system "exiftran", "-ip", $rot, Glib::filename_from_unicode $path
             and die "exiftran failed: $?";
       }
-
    };
 
    $job->finish;
@@ -272,7 +277,7 @@ sub {
       mkdir Glib::filename_from_unicode +(dirname $path) . "/.xvpics", 0777;
 
       my $pb = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg Glib::filename_from_unicode $path, 1 }
-               || eval { new_from_file Gtk2::Gdk::Pixbuf $path }
+               || eval { new_from_file_at_scale Gtk2::Gdk::Pixbuf $path, IW, IH, 1 }
                || Gtk2::CV::require_image "error.png";
 
       my ($w, $h) = ($pb->get_width, $pb->get_height);
@@ -302,6 +307,7 @@ sub {
    my ($job) = @_;
    my $path = $job->{path};
 
+   aioreq_pri -2;
    aio_stat Glib::filename_from_unicode xvpic $path, sub {
       Gtk2::CV::Jobber::submit gen_thumb => $path
          unless $job->{stat}[9] == (stat _)[9];
@@ -325,10 +331,12 @@ sub {
 
       $job->finish;
    } else {
+      aioreq_pri -2;
       aio_unlink Glib::filename_from_unicode $job->{path}, sub {
          my $status = shift;
 
          aio_unlink Glib::filename_from_unicode xvpic $job->{path}, sub {
+            aioreq_pri -4;
             aio_rmdir Glib::filename_from_unicode xvdir $job->{path}, sub {
                $job->{data} = $status;
                $job->finish;
@@ -344,7 +352,9 @@ Gtk2::CV::Jobber::define unlink_thumb =>
 sub {
    my ($job) = @_;
 
+   aioreq_pri -2;
    aio_unlink Glib::filename_from_unicode xvpic $job->{path}, sub {
+      aioreq_pri -4;
       aio_rmdir Glib::filename_from_unicode xvdir $job->{path}, sub {
          $job->finish;
       };
@@ -361,6 +371,7 @@ sub {
    
    #TODO: move directories, too
 
+   aioreq_pri -4;
    aio_stat $dst, sub {
       $dst .= "/" . (dirname $src)[1] if -d _;
 
@@ -368,8 +379,10 @@ sub {
       my $idx = 0;
 
       my $try_open; $try_open = sub {
+         aioreq_pri -2;
          aio_open $dst, O_WRONLY | O_CREAT | O_EXCL, 0200, sub {
             if (my $fh = $_[0]) {
+               aioreq_pri -2;
                aio_move $src, $dst, sub {
                   if ($_[0]) {
                      my $errno = "$!";
@@ -381,6 +394,7 @@ sub {
                   } else {
                      $job->event (unlink => $src);
                      $job->event (create => $dst);
+                     aioreq_pri -2;
                      aio_move xvpic $src, xvpic $dst, sub {
                         # we do not care about the xvpic being copied correctly
                         print "$src => $dst\n";
@@ -496,6 +510,7 @@ sub prefetch {
 
    $self->{prefetch_source} = add Glib::Timeout 100, sub {
       my $id = ++$self->{prefetch_aio};
+      aioreq_pri -1;
       aio_open Glib::filename_from_unicode $self->{prefetch}, O_RDONLY, 0, sub {
          my $fh = $_[0]
             or return;
@@ -505,6 +520,7 @@ sub prefetch {
          $self->{aio_reader} = sub {
             return unless $id == $self->{prefetch_aio};
 
+            aioreq_pri -1;
             aio_read $fh, $ofs, 4096, my $buffer, 0, sub {
                return unless $self->{aio_reader};
                return delete $self->{aio_reader}
@@ -830,6 +846,7 @@ sub emit_sel_changed {
 
          my $id = ++$self->{aio_sel_changed};
 
+         aioreq_pri 3;
          aio_stat Glib::filename_from_unicode "$entry->[0]/$entry->[1]", sub {
             return unless $id == $self->{aio_sel_changed};
             $self->{info}->set_text (
@@ -1615,12 +1632,14 @@ sub idle_check {
 
          if ($entry->[2] & F_HASXVPIC) {
             my $xvpic = Glib::filename_from_unicode xvpic $path;
+            aioreq_pri -1;
             aio_open $xvpic, O_RDONLY, 0, sub {
                return unless $generation == $self->{generation};
 
                my $fh = shift
                   or return $self->start_idle_check;
 
+               aioreq_pri 0;
                aio_readahead $fh, 0, -s $fh, sub {
                   return unless $generation == $self->{generation};
 
@@ -1632,11 +1651,13 @@ sub idle_check {
             };
 
          } elsif ($entry->[2] & F_ISDIR) {
+            aioreq_pri -1;
             aio_stat Glib::filename_from_unicode "$path/.xvpics", sub {
                return unless $generation == $self->{generation};
 
                my $has_xvpics = -d _;
 
+               aioreq_pri -1;
                aio_lstat Glib::filename_from_unicode $path, sub {
                   return unless $generation == $self->{generation};
 
@@ -1667,6 +1688,7 @@ sub idle_check {
                };
             };
          } else {
+            aioreq_pri -1;
             aio_stat Glib::filename_from_unicode $path, sub {
                return unless $generation == $self->{generation};
 
@@ -1688,36 +1710,53 @@ sub idle_check {
 }
 
 sub do_chpaths {
-   my ($self, $paths, $nosort) = @_;
+   # nop
+}
 
-   Gtk2::CV::Jobber::inhibit {
-      my $base = $self->{dir};
+sub chpaths {
+   my ($self, $paths, $nosort, $cb) = @_;
 
-      delete $self->{cursor_current};
-      delete $self->{cursor};
-      delete $self->{sel};
-      delete $self->{map};
-      $self->{entry} = [];
-      $self->entry_changed;
+   $self->{chpaths_grp}->cancel if $self->{chpaths_grp};
 
-      $self->emit_sel_changed;
+   my $all_group = $self->{chpaths_grp} = aio_group $cb;
 
-      my %exclude = ($curdir => 0, $updir => 0, ".xvpics" => 0);
+   $self->set_sensitive (0);
+   my $inhibit_guard = Gtk2::CV::Jobber::inhibit_guard;
 
-      my %xvpics;
-      my $leaves = -1;
+   my $base = $self->{dir};
 
-      my $order = $paths;
+   delete $self->{cursor_current};
+   delete $self->{cursor};
+   delete $self->{sel};
+   delete $self->{map};
+   $self->{entry} = [];
+   $self->entry_changed;
 
-      if (defined $base) {
-         $leaves = (stat $base)[3];
-         $leaves -= 2; # . and ..
+   $self->emit_sel_changed;
 
-         if (opendir my $fh, Glib::filename_from_unicode "$base/.xvpics") {
-            $leaves--; # .xvpics
-            $xvpics{Glib::filename_to_unicode $_}++ while defined ($_ = readdir $fh);
-         }
+   my %exclude = ($curdir => 0, $updir => 0, ".xvpics" => 0);
 
+   my %xvpics;
+   my $leaves = -1;
+
+   my $order = $paths;
+
+   ### phase 1, .xvpics scan, if applicable, and sort
+
+   my $grp = add $all_group aio_group;
+
+   if (defined $base) {
+      $leaves = (stat $base)[3];
+      $leaves -= 2; # . and ..
+
+      add $grp aio_readdir Glib::filename_from_unicode "$base/.xvpics", sub {
+         return unless $_[0];
+
+         $leaves--; # .xvpics itself
+         $xvpics{Glib::filename_to_unicode $_}++ for @{ $_[0] };
+      };
+
+      add $grp aio_nop sub {
          # try stat'ing entries that look like directories first
          my (@d, @f);
          for (@$paths) {
@@ -1726,101 +1765,126 @@ sub do_chpaths {
 
          push @d, @f;
          $paths = \@d;
-      }
+      };
+
+   }
+
+   cb $grp sub {
+      my $grp = add $all_group aio_group;
 
       my $progress = new Gtk2::CV::Progress title => "scanning...", work => scalar @$paths;
 
       my (@d, @f);
+      my $i = 0;
 
-      for my $e (@$paths) {
-         my ($dir, $file) = @$e;
+      feed $grp sub {
+         while ($i < @$paths) {
+            my ($dir, $file) = @{ $paths->[$i++] };
 
-         if (exists $exclude{$file}) {
-            # ignore
-            $progress->increment;
-         } elsif ($base eq $dir ? exists $xvpics{$file} : -r "$dir/.xvpics/$file") {
-            delete $xvpics{$file};
-            push @f, [$dir, $file, F_HASXVPIC];
-            $progress->increment;
-         } elsif ($leaves) {
-            # this is faster than a normal stat on many modern filesystems
-            aio_stat Glib::filename_from_unicode "$dir/$file/$curdir", sub {
-               if (!$_[0]) { # no error
-                  aio_lstat Glib::filename_from_unicode "$dir/$file", sub {
-                     if (-d _) {
-                        $leaves--;
-                        push @d, [$dir, $file, F_ISDIR | F_HASPM, $directory_visited{"$dir/$file"} ? $dirv_img : $diru_img];
-                     } else {
-                        push @f, [$dir, $file];
-                     }
+            if (exists $exclude{$file}) {
+               # ignore
+               $progress->increment;
+            } elsif ($base eq $dir ? exists $xvpics{$file} : -r "$dir/.xvpics/$file") {
+               delete $xvpics{$file};
+               push @f, [$dir, $file, F_HASXVPIC];
+               $progress->increment;
+            } elsif ($leaves) {
+               # this is faster than a normal stat on many modern filesystems
+               add $grp aio_stat Glib::filename_from_unicode "$dir/$file/$curdir", sub {
+                  if (!$_[0]) { # no error
+                     add $grp aio_lstat Glib::filename_from_unicode "$dir/$file", sub {
+                        if (-d _) {
+                           $leaves--;
+                           push @d, [$dir, $file, F_ISDIR | F_HASPM, $directory_visited{"$dir/$file"} ? $dirv_img : $diru_img];
+                        } else {
+                           push @f, [$dir, $file];
+                        }
+                        $progress->increment;
+                     };
+                  } elsif ($! == ENOTDIR) {
+                     push @f, [$dir, $file];
                      $progress->increment;
-                  };
-               } elsif ($! == ENOTDIR) {
-                  push @f, [$dir, $file];
+                  } else {
+                     # does not exist:
+                     # ELOOP, ENAMETOOLONG => symlink pointing nowhere
+                     # ENOENT => entry does not even exist
+                     # EACCESS, EIO, EOVERFLOW => we have to give up
+                     $progress->increment;
+                  }
+               };
+
+               return;
+            } else {
+               push @f, [$dir, $file, undef, 0];
+               $progress->increment;
+            }
+         }
+      };
+
+      cb $grp sub {
+         $progress->set_title ("sorting...");
+
+         if ($nosort) {
+            for (\@d, \@f) {
+               my %h = map +("$_->[0]/$_->[1]" => $_), @$_;
+               @$_ = grep $_, map $h{"$_->[0]/$_->[1]"}, @$order;
+            }
+         } else {
+            for (\@d, \@f) {
+               @$_ = map $_->[1],
+                          sort { $a->[0] cmp $b->[0] }
+                             map [foldcase $_->[1], $_],
+                                 @$_;
+            }
+         }
+
+         $self->{entry} = [@d, @f];
+         $self->entry_changed;
+
+         $self->{adj}->set_value (0);
+         $self->setadj;
+
+         $self->{draw}->queue_draw;
+
+         # remove extraneous .xvpics files (but only after an extra check)
+         my @xvpics = keys %xvpics;
+         $progress = new Gtk2::CV::Progress title => "clean thumbails...", work => scalar @xvpics;
+
+         my $grp = aio_group sub {
+            # try to nuke .xvpics at the end, maybe it is empty
+            rmdir "$base/.xvpics";
+         };
+
+         limit $grp 1;
+         feed $grp sub {
+            @xvpics or return;
+            my $file = pop @xvpics;
+            aioreq_pri -3;
+            add $grp aio_stat Glib::filename_from_unicode "$base/$file", sub {
+               if (!$_[0] || -d _) {
                   $progress->increment;
                } else {
-                  # does not exist:
-                  # ELOOP, ENAMETOOLONG => symlink pointing nowhere
-                  # ENOENT => entry does not even exist
-                  # EACCESS, EIO, EOVERFLOW => we have to give up
-                  $progress->increment;
+                  aioreq_pri -3;
+                  add $grp aio_unlink Glib::filename_from_unicode "$self->{dir}/.xvpics/$file", sub {
+                     $progress->increment;
+                  };
                }
             };
-         } else {
-            push @f, [$dir, $file, undef, 0];
-            $progress->increment;
-         }
-      }
+         };
 
-      IO::AIO::poll while $progress->inprogress;
+         delete $self->{chpaths_grp};
+         undef $inhibit_guard;
+         $self->set_sensitive (1);
+         $self->{draw}->grab_focus unless eval { $self->get_toplevel->get_focus };
 
-      $progress->set_title ("sorting...");
-
-      if ($nosort) {
-         for (\@d, \@f) {
-            my %h = map +("$_->[0]/$_->[1]" => $_), @$_;
-            @$_ = grep $_, map $h{"$_->[0]/$_->[1]"}, @$order;
-         }
-      } else {
-         for (\@d, \@f) {
-            @$_ = map $_->[1],
-                       sort { $a->[0] cmp $b->[0] }
-                          map [foldcase $_->[1], $_],
-                              @$_;
-         }
-      }
-
-      $self->{entry} = [@d, @f];
-      $self->entry_changed;
-
-      $self->{adj}->set_value (0);
-      $self->setadj;
-
-      $self->{draw}->queue_draw;
-
-      # remove extraneous .xvpics files (but only after an extra check)
-      my $outstanding = scalar keys %xvpics;
-
-      $progress = new Gtk2::CV::Progress title => "clean thumbails...", work => $outstanding;
-
-      for my $file (keys %xvpics) {
-         aio_stat Glib::filename_from_unicode "$base/$file", sub {
-            $progress->increment;
-
-            rmdir "$base/.xvpics" unless --$outstanding; # try to remove the dir at the end
-
-            return if !$_[0] || -d _;
-
-            aio_unlink Glib::filename_from_unicode "$self->{dir}/.xvpics/$file";
-         }
-      }
-
-      $self->start_idle_check;
+         $self->start_idle_check;
+         $self->signal_emit ("chpaths");
+      };
    };
 }
 
 sub set_paths {
-   my ($self, $paths, $nosort) = @_;
+   my ($self, $paths, $nosort, $cb) = @_;
 
    $paths = [
       map /^(.*)\/([^\/]*)$/s
@@ -1830,14 +1894,20 @@ sub set_paths {
    ];
  
    delete $self->{dir};
-   $self->signal_emit (chpaths => $paths, $nosort);
+   $self->chpaths ($paths, $nosort, sub {
+      $self->window->property_delete (Gtk2::Gdk::Atom->intern ("_X_CWD", 0))
+         if $self->window;
 
-   $self->window->property_delete (Gtk2::Gdk::Atom->intern ("_X_CWD", 0))
-      if $self->window;
+      $cb->() if $cb;
+   });
 }
 
 sub do_chdir {
-   my ($self, $dir) = @_;
+   # nop
+}
+
+sub chdir {
+   my ($self, $dir, $cb) = @_;
 
    $dir = Glib::filename_to_unicode Cwd::abs_path Glib::filename_from_unicode $dir;
 
@@ -1855,19 +1925,21 @@ sub do_chdir {
    );
 
    $self->{dir} = $dir;
-   $self->signal_emit (chpaths => [map eval { [$dir, Glib::filename_to_unicode $_] }, readdir $fh], 0);
+   $self->chpaths ([map eval { [$dir, Glib::filename_to_unicode $_] }, readdir $fh], 0, $cb);
+
+   $self->signal_emit (chdir => $dir);
 }
 
-=item $schnauzer->set_dir ($path)
+=item $schnauzer->set_dir ($path[, $cb])
 
 Replace the schnauzer contents by the files in the given directory.
 
 =cut
 
 sub set_dir {
-   my ($self, $dir) = @_;
+   my ($self, $dir, $cb) = @_;
 
-   $self->signal_emit (chdir => $dir);
+   $self->chdir ($dir, $cb);
 }
 
 =item $state = $schnauzer->get_state
@@ -1890,20 +1962,20 @@ sub get_state {
 }
 
 sub set_state {
-   my ($self, $state) = @_;
+   my ($self, $state, $cb) = @_;
 
    my ($dir, $paths) = @$state;
 
    if ($paths) {
-      $self->set_paths ($paths);
+      $self->set_paths ($paths, $cb);
    } else {
-      $self->set_dir ($dir);
+      $self->set_dir ($dir, $cb);
    }
 }
 
 =item $schnauzer->push_state
 
-=item $schnauzer->pop_state
+=item $schnauzer->pop_state ([$cb])
 
 Pushes/pops the state from the state stack. Is used internally to
 implement recursing into subdirectories and returning.
@@ -1917,9 +1989,9 @@ sub push_state {
 }
 
 sub pop_state {
-   my ($self) = @_;
+   my ($self, $cb) = @_;
 
-   $self->set_state (pop @{ $self->{state_stack} });
+   $self->set_state (pop @{ $self->{state_stack} }, $cb);
 }
 
 sub updir {

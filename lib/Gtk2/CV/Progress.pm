@@ -21,9 +21,9 @@ use Gtk2::CV;
 
 use Time::HiRes 'time';
 
-sub INITIAL   (){ 0.50 } # initial popup delay
-sub INTERVAL1 (){ 0.05 } # minimum update interval
-sub INTERVAL2 (){ 0.15 } # minimum update interval
+sub INITIAL   (){ 0.15 } # initial popup delay
+sub INTERVAL1 (){ 0.01 } # minimum update interval
+sub INTERVAL2 (){ 0.10 } # minimum update interval
 
 =item new Gtk2::CV::Progress ...
 
@@ -84,12 +84,12 @@ sub update {
          $self->{next} = $now + INTERVAL2;
       }
 
-      $self->{bar}->set_fraction ($progress / $self->{work});
+      $self->{bar}->set_fraction ($progress / ($self->{work} || 1));
 
       if ($self->{work} > 1) {
          $self->{bar}->set_text ("$progress / $self->{work}");
       } else {
-         $self->{bar}->set_text (sprintf "%2d%%", 100 * $progress / $self->{work});
+         $self->{bar}->set_text (sprintf "%2d%%", 100 * $progress / ($self->{work} || 1));
       }
 
       Gtk2->main_iteration while Gtk2->events_pending;

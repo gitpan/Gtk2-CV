@@ -6,6 +6,18 @@ TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
 TODO: cv file => rescan => 0 byte size if file no longer exists
 
+1.4  Sat Mar 17 14:11:48 CET 2007
+	- upgraded to IO::AIO 2.1 features.
+        - errors in IO::AIO callback execution will be logged and will
+          not freeze AIO operations anymore.
+        - jpeg2000 support by running jasper externally (imageviewer only).
+        - directory scanning now asynchronous.
+        - increased progress update frequency and reduced delay.
+        - add/enable icons for mp2/mp3/ogm.
+        - better ogm support.
+        - use mplayer for just about anything as opposed to just for video/*.
+        - fix auto rotation in older perls.
+
 1.3  Wed Sep 27 23:59:27 CEST 2006
 	- simplify redraw, avoid unnecessary schnauzer redraws.
         - add rotate entries to the schnauzer menu, adapted

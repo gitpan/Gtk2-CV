@@ -49,8 +49,10 @@ sub INIT_INSTANCE {
       my $k = $_[0]{data}[$row][1];
       $k = $self->{cluster}{$k};
 
-      local $self->{updating} = 1;
-      $self->{schnauzer}->set_paths ($k);
+      $self->{updating} = 1;
+      $self->{schnauzer}->set_paths ($k, 0, sub {
+         delete $self->{updating};
+      });
 
       1
    });

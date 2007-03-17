@@ -8,21 +8,28 @@ use IO::AIO;
 BEGIN {
    use XSLoader;
 
-   $VERSION = '1.3';
+   $VERSION = '1.4';
 
    XSLoader::load "Gtk2::CV", $VERSION;
 }
 
 my $aio_source;
 
-# we use a low priority to give GUI interactions as high a priority
+IO::AIO::min_parallel 32;
+IO::AIO::max_poll_time 0.01;
+
+# we use a low priority watcher to give GUI interactions as high a priority
 # as possible.
 sub enable_aio {
    $aio_source ||=
       add_watch Glib::IO IO::AIO::poll_fileno,
-                         in => sub { IO::AIO::poll_cb; 1 },
-                         undef,
-                         &Glib::G_PRIORITY_LOW;
+         in => sub {
+            eval { IO::AIO::poll_cb };
+            warn $@ if $@;#d#
+            1
+         },
+         undef,
+         &Glib::G_PRIORITY_LOW;
 }
 
 sub disable_aio {
@@ -30,8 +37,12 @@ sub disable_aio {
    undef $aio_source;
 }
 
+sub flush_aio {
+   enable_aio;
+   IO::AIO::flush;
+}
+
 enable_aio;
-IO::AIO::max_outstanding 128;
 
 sub find_rcfile($) {
    my $path;

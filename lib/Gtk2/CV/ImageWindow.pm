@@ -48,6 +48,8 @@ use Glib::Object::Subclass
       },
    };
 
+our $SET_ASPECT;
+
 sub INIT_INSTANCE {
    my ($self) = @_;
 
@@ -220,18 +222,35 @@ sub load_image {
 
    if ($type =~ /^application\//) {
       my $magic = Gtk2::CV::magic $path;
-      $type = $othertypes{$magic};
+      $type = $othertypes{$magic}
+         if exists $othertypes{$magic};
    }
 
    if (!length $type && $path =~ /\.([^.]+)$/) {
       $type = $exttypes{lc $1};
    }
 
-   if ($type eq "image/jpeg") {
+   $@ = "generic file display error";
+
+   if ($type eq "application/octet-stream" or $type =~ /^text\//) {
+      $@ = "unrecognised file format";
+      # should, but can't
+
+   } elsif ($type eq "image/jpeg") {
       $image = Gtk2::CV::load_jpeg Glib::filename_from_unicode $path;
+
+   } elsif ($type eq "image/jp2") { # jpeg2000 hack
+      open my $pnm, "-|:raw", "jasper", "--input", $path, "--output-format", "pnm"
+         or die "error running jasper (jpeg2000): $!";
+      my $loader = new_with_type Gtk2::Gdk::PixbufLoader "pnm";
+      local $/; $loader->write (<$pnm>);
+      $loader->close;
+      $image = $loader->get_pixbuf;
+
    } elsif ($type =~ /^image\//) {
       $image = new_from_file Gtk2::Gdk::Pixbuf $path;
-   } elsif ($type =~ /^video\//) {
+
+   } elsif ($type =~ /^(?:video|application|audio)\//) {
       $path = "./$path" if $path =~ /^-/;
 
       # try video
@@ -518,8 +537,24 @@ sub resize {
    $self->{dw} = $w;
    $self->{dh} = $h;
 
+   if ($Gtk2::CV::ImageWindow::SET_ASPECT) {
+      Gtk2::CV::gdk_window_clear_hints ($self->{window});
+      $self->{window}->get_screen->get_display->flush;
+   }
+
    $self->auto_position ($w, $h);
    $self->{window}->resize ($w, $h);
+
+   if ($Gtk2::CV::ImageWindow::SET_ASPECT) {
+      my $minaspect = $w / $h;
+      my $maxaspect = $w / $h;
+
+      my $hints = new Gtk2::Gdk::Geometry;
+      $hints->max_aspect ($maxaspect);
+      $hints->min_aspect ($minaspect);
+      $self->set_geometry_hints ($self, $hints, [qw/aspect/]);
+      $self->{window}->get_screen->get_display->flush;
+   }
 
    $self->redraw;
 }
@@ -726,7 +761,7 @@ sub handle_key {
       }
    }
 
-   1;
+   1
 }
 
 sub schedule_redraw {

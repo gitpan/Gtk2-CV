@@ -66,6 +66,8 @@ sub new_imagewindow {
 sub new_schnauzer {
 }
 
+=back
+
 =head1 AUTHOR
 
  Marc Lehmann <schmorp@schmorp.de>

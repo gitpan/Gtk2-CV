@@ -251,15 +251,18 @@ sub Gtk2::CV::Jobber::Job::run {
       or die;
 
    if ($type->{read} && !$job->{fh}) {
+      aioreq_pri -3;
       aio_open Glib::filename_from_unicode $job->{path}, O_RDONLY, 0, sub {
          $job->{fh} = $_[0]
             or return $job->finish;
          $job->{stat} = [stat $job->{fh}]; # should be free of cost
+         aioreq_pri -3;
          aio_read $job->{fh}, 0, $type->{maxread}, $job->{contents}, 0, sub {
             $job->run;
          };
       };
    } elsif ($type->{stat} && !$job->{stat}) {
+      aioreq_pri -3;
       aio_stat Glib::filename_from_unicode $job->{path}, sub {
          $_[0] and return $job->finish; # don't run job if stat error
          $job->{stat} = [stat _];

@@ -162,19 +162,25 @@ sub std_keys {
 }
 
 if (@ARGV) {
+   my $show_first = sub {
+      $schnauzer->show_all;
+      $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
+      $viewer->show_all;
+   };
+
    @ARGV == 1 && -d $ARGV[0]
-      ? $schnauzer->set_dir (Glib::filename_to_unicode shift)
-      : $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV], 1);
-   $schnauzer->show_all;
-   $schnauzer->handle_key ($Gtk2::Gdk::Keysyms{space}, []);
+      ? $schnauzer->set_dir (Glib::filename_to_unicode shift, $show_first)
+      : $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV], 1, $show_first);
 } else {
-   $schnauzer->set_dir (File::Spec->curdir);
-   $mainwin->show_all;
+   $schnauzer->set_dir (File::Spec->curdir, sub {
+      $mainwin->show_all;
+      $viewer->show_all;
+   });
 }
 
-$viewer->show_all;
-
 main Gtk2;
+
+Gtk2::CV::flush_aio;
 
 __DATA__
 
