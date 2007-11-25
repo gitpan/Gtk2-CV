@@ -2,6 +2,7 @@
 
 use Cwd ();
 use Encode ();
+use File::Glob ();
 
 use Gtk2 -init;
 use Gtk2::Gdk::Keysyms;
@@ -114,7 +115,7 @@ sub std_keys {
 
    } elsif ($ctrl && $key == $Gtk2::Gdk::Keysyms{h}) {
       unless ($help) {
-         require Gtk2::PodViewer;
+         require Gtk2::Ex::PodViewer;
 
          $help = new Gtk2::Window;
          $help->set_role ("help");
@@ -123,7 +124,7 @@ sub std_keys {
          $help->signal_connect (delete_event => sub { $help->hide; 1 });
 
          $help->add (my $sw = new Gtk2::ScrolledWindow);
-         $sw->add (my $h = new Gtk2::PodViewer);
+         $sw->add (my $h = new Gtk2::Ex::PodViewer);
 
          #binmode DATA, ":utf8";
          $h->load_string (do { local $/; <DATA> });
@@ -168,9 +169,18 @@ if (@ARGV) {
       $viewer->show_all;
    };
 
-   @ARGV == 1 && -d $ARGV[0]
-      ? $schnauzer->set_dir (Glib::filename_to_unicode shift, $show_first)
-      : $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV], 1, $show_first);
+   if (@ARGV == 1 && $ARGV[0] eq "-0r") {
+      local $/;
+      $schnauzer->set_paths ([map Glib::filename_to_unicode $_, split /\x00/, <STDIN>], 1, $show_first);
+   } elsif (@ARGV == 1 && -d $ARGV[0]) {
+      $schnauzer->set_dir (Glib::filename_to_unicode shift, $show_first);
+   } else {
+      if ($ARGV[0] eq "-g") {
+         shift @ARGV;
+         @ARGV = map +(File::Glob::bsd_glob $_, File::Glob::GLOB_BRACE | File::Glob::GLOB_QUOTE), @ARGV;
+      }
+      $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV], 1, $show_first);
+   }
 } else {
    $schnauzer->set_dir (File::Spec->curdir, sub {
       $mainwin->show_all;
@@ -429,6 +439,11 @@ This will load a plug-in, but only if the machine I<ether> is reachable
 
 The program that gets executed when the user presses C<CTRL-e> in the
 Schnauzer or image window. The default is C<gimp>.
+
+=item CV_AUDIO_PLAYER
+
+Program used to play all sorts of audio (wav, aif, mp3, ogg...), default "play".
+Will be called like C<< $CV_AUDIO_PLAYER -- <path> >>.
 
 =item CV_PRINT_DESTINATION
 

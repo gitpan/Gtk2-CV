@@ -110,23 +110,28 @@ sub SET_PROPERTY {
 sub FINALIZE_INSTANCE {
    my ($self) = @_;
 
-   $self->kill_mplayer;
+   $self->kill_player;
 }
 
 sub do_image_changed {
    my ($self) = @_;
 }
 
-sub kill_mplayer {
+sub kill_player {
    my ($self) = @_;
 
-   if ($self->{mplayer_pid} > 0) {
-      local $SIG{PIPE} = 'IGNORE';
-      print {$self->{mplayer_fh}} "quit\n";
-      close $self->{mplayer_fh};
-      #kill INT => $self->{mplayer_pid};
-      waitpid delete $self->{mplayer_pid}, 0;
-      (delete $self->{mplayer_box})->destroy;
+   if ($self->{player_pid} > 0) {
+
+      if ($self->{mplayer_fh}) {
+         local $SIG{PIPE} = 'IGNORE';
+         print {$self->{mplayer_fh}} "quit\n";
+         close delete $self->{mplayer_fh};
+      } else {
+         kill INT  => $self->{player_pid};
+         kill TERM => $self->{player_pid};
+      }
+      waitpid delete $self->{player_pid}, 0;
+      (delete $self->{mplayer_box})->destroy if $self->{mplayer_box};
    }
 }
 
@@ -172,7 +177,7 @@ Removes the current image (usually replacing it by the default image).
 sub clear_image {
    my ($self) = @_;
 
-   $self->kill_mplayer;
+   $self->kill_player;
 
    delete $self->{image};
    delete $self->{subimage};
@@ -204,6 +209,7 @@ mplayer supports it).
 my %othertypes = (
    "Microsoft ASF"  => "video/x-asf",
    "RealMedia file" => "video/x-rm",
+   "Matroska data"  => "video/x-ogg",
 );
 
 my %exttypes = (
@@ -211,10 +217,52 @@ my %exttypes = (
    mpeg => "video/mpeg",
 );
 
+#sub gstreamer_setup {
+#   my ($self, $path) = @_;
+#
+#   require GStreamer;
+#   GStreamer->init;
+#
+#   my $bin = GStreamer::ElementFactory->make (playbin => "CV")
+#      or return;
+#
+#   $bin->set (uri => (Glib::filename_to_uri $path, "localhost"), async => 0);
+#   $bin->get_bus->add_watch (sub {
+#      my ($bus, $msg) = @_;
+#
+#      return unless $msg->src == $bin;
+#
+#      my $type = $msg->type;
+#
+##      warn $type;
+#      if ($type eq "error") {
+#         warn $msg->error;
+#      } elsif ($type eq "segment-done") {
+#         $bin->seek (1, "time", "segment", set => 0, end => 0);
+#      }
+#
+#      1
+#   });
+#
+#   $bin->set_state ("paused");
+#   $bin->sync_state; # perl cannot do non-blocking gstreamer stuff yet
+#   my $dur = new GStreamer::Query::Duration "time";
+#   $bin->query ($dur) or return;
+#   warn join ":", $dur->duration;
+#   $bin->seek (1, "time", "segment", set => 0, end => 0);
+#   $bin->set_state ("playing");
+#
+#
+#   my $image = new Gtk2::Gdk::Pixbuf "rgb", 0, 8, 64, 48;
+#   $image->fill ("\0\0\0");
+#
+#   $image
+#}
+
 sub load_image {
    my ($self, $path) = @_;
 
-   $self->kill_mplayer;
+   $self->kill_player;
    $self->force_redraw;
 
    my $image;
@@ -250,7 +298,24 @@ sub load_image {
    } elsif ($type =~ /^image\//) {
       $image = new_from_file Gtk2::Gdk::Pixbuf $path;
 
-   } elsif ($type =~ /^(?:video|application|audio)\//) {
+   } elsif ($type =~ /^(audio\/|application\/ogg$)/) {
+      if (1 || exists $ENV{CV_AUDIO_PLAYER}) {
+         $self->{player_pid} = fork;
+
+         if ($self->{player_pid} == 0) {
+            open STDIN , "</dev/null";
+            open STDOUT, ">/dev/null";
+            open STDERR, ">&2";
+
+            my $player = $ENV{CV_AUDIO_PLAYER} || "play";
+            exec "$player -- \Q$path";
+            POSIX::_exit 0;
+         }
+      } else {
+         $image = $self->gstreamer_setup ($path);
+      }
+
+   } elsif ($type =~ /^(?:video|application)\//) {
       $path = "./$path" if $path =~ /^-/;
 
       # try video
@@ -301,9 +366,9 @@ sub load_image {
          pipe my $rfh, $self->{mplayer_fh};
          $self->{mplayer_fh}->autoflush (1);
 
-         $self->{mplayer_pid} = fork;
+         $self->{player_pid} = fork;
 
-         if ($self->{mplayer_pid} == 0) {
+         if ($self->{player_pid} == 0) {
             open STDIN, "<&" . fileno $rfh;
             open STDOUT, ">/dev/null";
             open STDERR, ">/dev/null";
@@ -317,6 +382,7 @@ sub load_image {
          $@ = "mplayer doesn't recognize this '$type' file";
          # probably audio, or a real error
       }
+
    } else {
       $@ = "unrecognized file format '$type'";
    }
@@ -730,29 +796,29 @@ sub handle_key {
          delete $self->{drag_info};
 
       # extra mplayer controls
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Right}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{Right}) {
          print {$self->{mplayer_fh}} "seek +10\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Left}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{Left}) {
          print {$self->{mplayer_fh}} "seek -10\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Up}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{Up}) {
          print {$self->{mplayer_fh}} "seek +60\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Down}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{Down}) {
          print {$self->{mplayer_fh}} "seek -60\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Page_Up}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{Page_Up}) {
          print {$self->{mplayer_fh}} "seek +600\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Page_Down}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{Page_Down}) {
          print {$self->{mplayer_fh}} "seek -600\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{o}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{o}) {
          print {$self->{mplayer_fh}} "osd\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{p}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{p}) {
          print {$self->{mplayer_fh}} "pause\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{Escape}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{Escape}) {
          print {$self->{mplayer_fh}} "quit\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{9}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{9}) {
          print {$self->{mplayer_fh}} "volume -1\n";
-      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{0}) {
+      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{0}) {
          print {$self->{mplayer_fh}} "volume 1\n";
-#      } elsif ($self->{mplayer_pid} && $key == $Gtk2::Gdk::Keysyms{f}) {
+#      } elsif ($self->{player_pid} && $key == $Gtk2::Gdk::Keysyms{f}) {
 #         print {$self->{mplayer_fh}} "vo_fullscreen\n";
 
       } else {

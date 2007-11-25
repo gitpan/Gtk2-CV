@@ -134,6 +134,13 @@ my %ext_logo = (
 
    mp2  => "mp2",
    mp3  => "mp3",
+   pcm  => "audio", # rare
+   sun  => "audio", # rare
+   au   => "audio",
+   iff  => "audio", # rare
+   aif  => "audio",
+   aiff => "audio",
+   wav  => "audio",
 
    mpeg => "mpeg",
    mpg  => "mpeg",

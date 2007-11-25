@@ -127,6 +127,11 @@ sub analyse {
    # remove component index
    my %clean;
    while (my ($k, $v) = each %$cluster) {
+      if (exists $clean{substr $k, 6}) {
+         my $idx = 0;
+         ++$idx while exists $clean{(substr $k, 6)."/$idx"};
+         $k .= "/$idx";
+      }
       $clean{substr $k, 6} = $v;
    }
    $self->{cluster} = \%clean;

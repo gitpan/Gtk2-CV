@@ -6,6 +6,10 @@ TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
 TODO: cv file => rescan => 0 byte size if file no longer exists
 
+1.41 Sun Nov 25 15:15:27 CET 2007
+	- rudimentary support for audio.
+	- fix Gtk2::Ex::PodViewer rename (patch by Randy J. Ray).
+
 1.4  Sat Mar 17 14:11:48 CET 2007
 	- upgraded to IO::AIO 2.1 features.
         - errors in IO::AIO callback execution will be logged and will

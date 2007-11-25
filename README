@@ -210,6 +210,10 @@ ENVIRONMENT
         The program that gets executed when the user presses "CTRL-e" in the
         Schnauzer or image window. The default is "gimp".
 
+    CV_AUDIO_PLAYER
+        Program used to play all sorts of audio (wav, aif, mp3, ogg...),
+        default "play". Will be called like "$CV_AUDIO_PLAYER -- <path>".
+
     CV_PRINT_DESTINATION
         The default (perl-style) destination to use in the print dialog.
 
