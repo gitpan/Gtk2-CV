@@ -210,6 +210,7 @@ my %othertypes = (
    "Microsoft ASF"  => "video/x-asf",
    "RealMedia file" => "video/x-rm",
    "Matroska data"  => "video/x-ogg",
+   "RIFF (little-endian) data, wrapped MPEG-1 (CDXA)" => "video/mpeg",
 );
 
 my %exttypes = (

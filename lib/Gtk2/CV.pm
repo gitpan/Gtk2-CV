@@ -8,7 +8,7 @@ use IO::AIO;
 BEGIN {
    use XSLoader;
 
-   $VERSION = '1.5';
+   $VERSION = '1.51';
 
    XSLoader::load "Gtk2::CV", $VERSION;
 }
@@ -16,7 +16,7 @@ BEGIN {
 my $aio_source;
 
 IO::AIO::min_parallel 32;
-IO::AIO::max_poll_time 0.01;
+IO::AIO::max_poll_reqs 2;
 
 # we use a low priority watcher to give GUI interactions as high a priority
 # as possible.

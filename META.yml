@@ -1,9 +1,10 @@
 --- #YAML:1.0
 name:                Gtk2-CV
-version:             1.5
+version:             1.51
 abstract:            ~
 license:             ~
-generated_by:        ExtUtils::MakeMaker version 6.32
+author:              ~
+generated_by:        ExtUtils::MakeMaker version 6.42
 distribution_type:   module
 requires:     
     Glib:                          1.08
@@ -12,5 +13,5 @@ requires:
     Gtk2::GladeXML:                0.93
     IO::AIO:                       2.2
 meta-spec:
-    url:     http://module-build.sourceforge.net/META-spec-v1.2.html
-    version: 1.2
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3

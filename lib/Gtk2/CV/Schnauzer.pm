@@ -1082,7 +1082,10 @@ sub cursor_move {
 sub clear_cursor {
    my ($self) = @_;
 
-   if (defined (my $cursor = delete $self->{cursor})) {
+   if (
+      defined (my $cursor = delete $self->{cursor})
+      && 1 >= scalar keys %{ $self->{sel} }
+   ) {
       delete $self->{sel}{$cursor};
       $self->emit_sel_changed;
 
@@ -1778,6 +1781,7 @@ sub chpaths {
 
    cb $grp sub {
       my $grp = add $all_group aio_group;
+      limit $grp 32;
 
       my $progress = new Gtk2::CV::Progress title => "scanning...", work => scalar @$paths;
 

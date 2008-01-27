@@ -6,7 +6,11 @@ TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
 TODO: cv file => rescan => 0 byte size if file no longer exists
 
-1.41 Sun Nov 25 15:15:27 CET 2007
+1.51 Sun Jan 27 17:48:14 CET 2008
+	- run more stats in parallel in schnauzer scanning.
+        - do not deselect cursor on scroll if a range is selected.
+
+1.5  Sun Nov 25 15:15:27 CET 2007
 	- rudimentary support for audio.
 	- fix Gtk2::Ex::PodViewer rename (patch by Randy J. Ray).
 

@@ -8,7 +8,8 @@ FEATURES
     CV is supposed to work similar to the venerable XV image viewer, just
     faster. Why faster?
 
-    * optimized directory scanning algorithm
+    *   optimized directory scanning algorithm
+
         The directory scanning in CV uses some tricks that - on most modern
         filesystems - makes it possible to detect filetypes faster than
         stat()'ing every file. This makes CV suitable for directories with
@@ -22,32 +23,37 @@ FEATURES
         than traditional scanning techniques (good for directories with
         10000 or 100000+ files).
 
-    * queuing for all time-consuming background tasks
+    *   queuing for all time-consuming background tasks
+
         All tasks, such as unlinking files or generating thumbnails, that
         can be done in the background will be done so - no waiting required,
         even when changing directories.
 
-    * use of asynchronous I/O
+    *   use of asynchronous I/O
+
         CV tries to use asynchronous I/O whereever it makes sense, for
         example while scanning directories, waiting for stat data, unlinking
         files or generating thumbnails. This usually decreases scanning
         times for large directories a bit (especially on RAID devices and
         over NFS) and makes CV much more interactive.
 
-    * fast image loading
+    *   fast image loading
+
         The time span between the user issuing a command and displaying the
         new image should be as small as possible. CV uses optimized
         (especially for JPEG) loading functions and sacrifices some quality
         (e.g no gamma correction, although this might change) to achieve
         this speed.
 
-    * fast thumbnail creation
+    *   fast thumbnail creation
+
         Thumbnail creation uses both CPU and Disk-I/O. CV interleaves both,
         so on modern CPUs, thumbnailing is usually limited by I/O speed.
         Thumbnail creation for JPEGs has been specially optimized and can
         even take advantage of multiple CPUs.
 
-    * minimum optical clutter
+    *   minimum optical clutter
+
         CV has no menus or other user interface elements that take up a lot
         of screen space (or are useful for beginning users). The schnauzer
         windows can also be somewhat crowded.
@@ -55,28 +61,33 @@ FEATURES
         The point of an image viewer is viewing images, not a nice GUI. This
         is similar to XV's behaviour.
 
-    * efficient (and hard to learn) user interface
+    *   efficient (and hard to learn) user interface
+
         CV uses key combinations. A lot. If you are an experienced XV user,
         you will find most of these keys familiar. If not, CV might be hard
         to use at first, but will be an efficient tool later.
 
-    * multi-window GUI
+    *   multi-window GUI
+
         CV doesn't force you to use a specific layout, instead it relies on
         your window manager, thus enabling you to chose whatever layout that
         suits you most.
 
-    * i18n'ed filename handling throughout
+    *   i18n'ed filename handling throughout
+
         As long as glib can recognize your filename encoding (either UTF-8
         or locale-specific, depending on the setting of G_BROKEN_FILENAMES)
         and you have the relevant fonts, CV will display your filenames
         correctly.
 
-    * extensible through plug-ins
+    *   extensible through plug-ins
+
         I have weird plug-ins that access remote databases to find a
         directory. This is not likely to be of any use to other people.
         Likewise, others might have weird requirements I cannot dream of.
 
-    * filename clustering
+    *   filename clustering
+
         Among the standard plug-ins is a filename clustering plug-in, that
         (in case of tens of thousands images in one directory) might be able
         to cluster similar names together.
@@ -99,8 +110,8 @@ DESCRIPTION
      r            set scaling mode to 'nearest' (fastest)
      s            set scaling mode to 'bilinear' (default)
      shift-s      set scaling mode to 'hyper' (slowest)
-     t            rotate clockwise 90Â°
-     T            rotate counterclockwiseÂ°
+     t            rotate clockwise 90°
+     T            rotate counterclockwise°
      a            apply all rotations loslessly to a jpeg file (using exiftran)
      ctrl-v       open a new visual schnauzer window for the current dir
      ctrl-c       clone the current image window

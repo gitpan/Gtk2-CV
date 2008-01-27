@@ -38,7 +38,7 @@ my @type; # type order
 my $disabled;
 my @idle_slave;
 
-my $MAXFORK = 1 + do {
+my $MAXFORK = int 1 + 1.5 * do {
    local $/;
    open my $fh, "<", "/proc/cpuinfo"
       or return 1;

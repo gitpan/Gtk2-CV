@@ -7,7 +7,7 @@ print <<EOF;
 ** libjpeg, Gtk2 and Glib. On debian, this should get you there:
 ** 
 ** apt-get install libextutils-depends-perl
-** apt-get install libgtk2-podviewer-perl libgtk2-gladexml-perl
+** apt-get install libgtk2-ex-podviewer-perl libgtk2-gladexml-perl
 ** apt-get install libmagic-dev libjpeg62-dev libglib-perl libgtk2-perl
 **
 
