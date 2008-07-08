@@ -32,12 +32,12 @@ use Gtk2::CV;
 use Glib::Object::Subclass
    Gtk2::VBox,
    signals => {
-      activate          => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
+      activate          => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
       popup             => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar, Gtk2::Gdk::Event] },
       popup_selected    => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar] },
       selection_changed => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
       chpaths           => { flags => [qw/run-first/], return_type => undef, param_types => [] },
-      chdir             => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::String] },
+      chdir             => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
    };
 
 use List::Util qw(min max);
@@ -258,7 +258,7 @@ sub {
            : die "can only rotate by 0, 90, 180 and 270 degrees";
 
       if ($rot) {
-         system "exiftran", "-ip", $rot, Glib::filename_from_unicode $path
+         system "exiftran", "-ip", $rot, $path
             and die "exiftran failed: $?";
       }
    };
@@ -281,9 +281,9 @@ sub {
       die "can only generate thumbnail for regular files"
          unless Fcntl::S_ISREG ($job->{stat}[2]);
 
-      mkdir Glib::filename_from_unicode +(dirname $path) . "/.xvpics", 0777;
+      mkdir +(dirname $path) . "/.xvpics", 0777;
 
-      my $pb = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg Glib::filename_from_unicode $path, 1 }
+      my $pb = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg $path, 1 }
                || eval { new_from_file_at_scale Gtk2::Gdk::Pixbuf $path, IW, IH, 1 }
                || Gtk2::CV::require_image "error.png";
 
@@ -298,10 +298,10 @@ sub {
       }
 
       $pb = Gtk2::CV::dealpha $pb->scale_simple ($w, $h, 'tiles');
-      $pb->save (Glib::filename_from_unicode xvpic $path, "jpeg", quality => 95);
+      $pb->save (xvpic $path, "jpeg", quality => 95);
       $job->{data} = $pb->get_pixels . pack "SSS", $w, $h, $pb->get_rowstride;
 
-      utime $job->{stat}[9], $job->{stat}[9], Glib::filename_from_unicode xvpic $path;
+      utime $job->{stat}[9], $job->{stat}[9], xvpic $path;
    };
 
    $job->finish;
@@ -315,12 +315,24 @@ sub {
    my $path = $job->{path};
 
    aioreq_pri -2;
-   aio_stat Glib::filename_from_unicode xvpic $path, sub {
+   aio_stat xvpic $path, sub {
       Gtk2::CV::Jobber::submit gen_thumb => $path
          unless $job->{stat}[9] == (stat _)[9];
 
       $job->finish;
    };
+};
+
+# recursively delete a directory
+Gtk2::CV::Jobber::define rm_rf =>
+   pri   => 1000,
+   fork  => 1,
+sub {
+   my ($job) = @_;
+
+   #$Gtk2::CV::Jobber::jobs{$job->{path}} = { }; # no further jobs make sense
+   system "rm", "-rf", $job->{path};
+   $job->finish;
 };
 
 # remove a file, or move it to the unlink directory
@@ -339,12 +351,12 @@ sub {
       $job->finish;
    } else {
       aioreq_pri -2;
-      aio_unlink Glib::filename_from_unicode $job->{path}, sub {
+      aio_unlink $job->{path}, sub {
          my $status = shift;
 
-         aio_unlink Glib::filename_from_unicode xvpic $job->{path}, sub {
+         aio_unlink xvpic $job->{path}, sub {
             aioreq_pri -4;
-            aio_rmdir Glib::filename_from_unicode xvdir $job->{path}, sub {
+            aio_rmdir xvdir $job->{path}, sub {
                $job->{data} = $status;
                $job->finish;
             };
@@ -360,9 +372,9 @@ sub {
    my ($job) = @_;
 
    aioreq_pri -2;
-   aio_unlink Glib::filename_from_unicode xvpic $job->{path}, sub {
+   aio_unlink xvpic $job->{path}, sub {
       aioreq_pri -4;
-      aio_rmdir Glib::filename_from_unicode xvdir $job->{path}, sub {
+      aio_rmdir xvdir $job->{path}, sub {
          $job->finish;
       };
    };
@@ -373,8 +385,8 @@ Gtk2::CV::Jobber::define mv =>
    class => "read",
 sub {
    my ($job) = @_;
-   my $src = Glib::filename_from_unicode $job->{path};
-   my $dst = Glib::filename_from_unicode $job->{data};
+   my $src = $job->{path};
+   my $dst = $job->{data};
    
    #TODO: move directories, too
 
@@ -420,9 +432,9 @@ sub {
    };
 
 #   # TODO: don't use /bin/mv and generate create events.
-#   system "/bin/mv", "-v", "-b", Glib::filename_from_unicode       $path, Glib::filename_from_unicode "$dest/.";
-#   system "/bin/mv",       "-b", Glib::filename_from_unicode xvpic $path, Glib::filename_from_unicode "$dest/.xvpics/."
-#      if -e Glib::filename_from_unicode xvpic $path;
+#   system "/bin/mv", "-v", "-b", $path, "$dest/.";
+#   system "/bin/mv",       "-b", xvpic $path, "$dest/.xvpics/."
+#      if -e xvpic $path;
 #   $job->event (unlink => $src);
 #   $job->event (create => $dest);
 };
@@ -518,7 +530,7 @@ sub prefetch {
    $self->{prefetch_source} = add Glib::Timeout 100, sub {
       my $id = ++$self->{prefetch_aio};
       aioreq_pri -1;
-      aio_open Glib::filename_from_unicode $self->{prefetch}, O_RDONLY, 0, sub {
+      aio_open $self->{prefetch}, O_RDONLY, 0, sub {
          my $fh = $_[0]
             or return;
 
@@ -780,17 +792,18 @@ sub INIT_INSTANCE {
    # other way to get at this info (for drag & drop, it's easy, so, again,
    # the normal selection comes as an afterthought at best).
    $self->{sel_widget}->selection_add_target (Gtk2::Gdk->SELECTION_PRIMARY, Gtk2::Gdk::Atom->new ($_), 1)
-      for qw (STRING TEXT UTF8_STRING COMPOUND_TEXT text/plain text/plain;charset=utf-8);
+      for qw(STRING TEXT UTF8_STRING COMPOUND_TEXT text/plain text/plain;charset=utf-8);
 
    $self->{sel_widget}->signal_connect (selection_get => sub {
       my (undef, $data, $info, $time) = @_;
 
       $data->set_text (
          join " ",
-            map /[^\x2b-\x39\x3d\x40-\x5a\x5e-\x5f\x61-\x7a\xa0-]/ ? do { s/([\x00-\x1f\"\\!])/\\$1/g; "\"$_\"" }
-                                    : $_,
+            map /[^\x2b-\x39\x3d\x40-\x5a\x5e-\x5f\x61-\x7a\xa0-]/
+                   ? do { s/([\x00-\x1f\"\\!])/\\$1/g; "\"$_\"" }
+                   : $_,
                sort
-                  map "$_->[0]/$_->[1]",
+                  map Glib::filename_to_unicode "$_->[0]/$_->[1]",
                      values %{$self->{sel} || {}}
       );
    });
@@ -854,14 +867,14 @@ sub emit_sel_changed {
          my $id = ++$self->{aio_sel_changed};
 
          aioreq_pri 3;
-         aio_stat Glib::filename_from_unicode "$entry->[0]/$entry->[1]", sub {
+         aio_stat "$entry->[0]/$entry->[1]", sub {
             return unless $id == $self->{aio_sel_changed};
             $self->{info}->set_text (
                sprintf "%s: %d bytes, last modified %s (in %s)",
-                       $entry->[1],
+                       (Glib::filename_display_name $entry->[1]),
                        -s _,
                        (strftime "%Y-%m-%d %H:%M:%S", localtime +(stat _)[9]),
-                       $entry->[0],
+                       (Glib::filename_display_name $entry->[0]),
             );
          };
       }
@@ -907,7 +920,9 @@ sub emit_popup {
       $sel->append (my $item = new Gtk2::MenuItem "Delete");
       $item->set_submenu (my $del = new Gtk2::Menu);
       $del->append (my $item = new Gtk2::MenuItem "Physically (Ctrl-D)");
-      $item->signal_connect (activate => sub { $self->unlink (@sel) });
+      $item->signal_connect (activate => sub { $self->unlink (0, @sel) });
+      $del->append (my $item = new Gtk2::MenuItem "Physically & Recursive (Ctrl-Shift-D)");
+      $item->signal_connect (activate => sub { $self->unlink (1, @sel) });
 
       $sel->append (my $item = new Gtk2::MenuItem "Rotate");
       $item->set_submenu (my $rotate = new Gtk2::Menu);
@@ -955,10 +970,10 @@ sub emit_popup {
          });
       }
 
-      $sel->append (my $item = new Gtk2::MenuItem "Unselect Thumbnailed");
+      $sel->append (my $item = new Gtk2::MenuItem "Unselect Thumbnailed (Ctrl -)");
       $item->signal_connect (activate => sub { $self->selection_remove_thumbnailed });
 
-      $sel->append (my $item = new Gtk2::MenuItem "Keep only Thumbnailed");
+      $sel->append (my $item = new Gtk2::MenuItem "Keep only Thumbnailed (Ctrl +)");
       $item->signal_connect (activate => sub { $self->selection_keep_only_thumbnailed });
    }
 
@@ -1221,19 +1236,23 @@ sub selection_keep_only_thumbnailed {
    $self->emit_sel_changed;
 }
 
-=item $schnauzer->unlink (idx[, idx...])
+=item $schnauzer->unlink (recursive, idx[, idx...])
 
 Physically delete the given entries.
 
 =cut
 
 sub unlink {
-   my ($self, @idx) = @_;
+   my ($self, $recursive, @idx) = @_;
 
    Gtk2::CV::Jobber::inhibit {
       for (sort { $b <=> $a } @idx) {
          my $e = $self->{entry}[$_];
-         Gtk2::CV::Jobber::submit unlink => "$e->[0]/$e->[1]";
+         if ($e->[2] & F_ISDIR) {
+            Gtk2::CV::Jobber::submit rm_rf => "$e->[0]/$e->[1]";
+         } else {
+            Gtk2::CV::Jobber::submit unlink => "$e->[0]/$e->[1]";
+         }
 
          --$self->{cursor} if $self->{cursor} > $_;
          delete $self->{sel}{$_};
@@ -1264,10 +1283,17 @@ sub handle_key {
       } elsif ($key == $Gtk2::Gdk::Keysyms{s}) {
          $self->rescan;
       } elsif ($key == $Gtk2::Gdk::Keysyms{d}) {
-         $self->unlink (keys %{$self->{sel}});
+         $self->unlink (0, keys %{$self->{sel}});
+      } elsif ($key == $Gtk2::Gdk::Keysyms{D}) {
+         $self->unlink (1, keys %{$self->{sel}});
       } elsif ($key == $Gtk2::Gdk::Keysyms{u}) {
          my @sel = keys %{$self->{sel}};
          $self->update_thumbnails (@sel ? @sel : 0 .. $#{$self->{entry}});
+
+      } elsif ($key == ord '-') {
+         $self->selection_remove_thumbnailed;
+      } elsif ($key == ord '+') {
+         $self->selection_keep_only_thumbnailed;
 
       } elsif ($key == $Gtk2::Gdk::Keysyms{Return}) {
          $self->cursor_move (0) unless $self->cursor_valid;
@@ -1530,6 +1556,9 @@ sub expose {
 
    my @jobs;
 
+   my $black_gc = $self->style->black_gc;
+   my $white_gc = $self->style->white_gc;
+
 outer:
    for my $y (@y) {
       for my $x (@x) {
@@ -1544,11 +1573,11 @@ outer:
 
             # selected?
             if (exists $self->{sel}{$idx}) {
-               $self->{window}->draw_rectangle ($self->style->black_gc, 1,
+               $self->{window}->draw_rectangle ($black_gc, 1,
                        $x, $y, IW + IX, IH + IY);
-               $text_gc = $self->style->white_gc;
+               $text_gc = $white_gc;
             } else {
-               $text_gc = $self->style->black_gc;
+               $text_gc = $black_gc;
             }
 
             if (exists $Gtk2::CV::Jobber::jobs{"$entry->[0]/$entry->[1]"}) {
@@ -1566,14 +1595,15 @@ outer:
             my $pm = $entry->[3];
             my ($pw, $ph) = $pm->get_size;
 
-            $self->{window}->draw_drawable ($self->style->white_gc,
+            $self->{window}->draw_drawable ($white_gc,
                      $pm,
                      0, 0,
                      $x + (IX + IW - $pw) * 0.5,
                      $y + (     IH - $ph) * 0.5,
                      $pw, $ph);
 
-            $layout->set_text ($entry->[1]);
+            $layout->set_text (Glib::filename_display_name $entry->[1]);
+
             my ($w, $h) = $layout->get_pixel_size;
 
             $self->{window}->draw_layout (
@@ -1641,7 +1671,7 @@ sub idle_check {
          $self->{idle_check}++;
 
          if ($entry->[2] & F_HASXVPIC) {
-            my $xvpic = Glib::filename_from_unicode xvpic $path;
+            my $xvpic = xvpic $path;
             aioreq_pri -1;
             aio_open $xvpic, O_RDONLY, 0, sub {
                return unless $generation == $self->{generation};
@@ -1662,19 +1692,19 @@ sub idle_check {
 
          } elsif ($entry->[2] & F_ISDIR) {
             aioreq_pri -1;
-            aio_stat Glib::filename_from_unicode "$path/.xvpics", sub {
+            aio_stat "$path/.xvpics", sub {
                return unless $generation == $self->{generation};
 
                my $has_xvpics = -d _;
 
                aioreq_pri -1;
-               aio_lstat Glib::filename_from_unicode $path, sub {
+               aio_lstat $path, sub {
                   return unless $generation == $self->{generation};
 
                   my $is_symlink = -l _;
                   my $is_empty = 1;
 
-                  opendir my $fh, Glib::filename_from_unicode $path
+                  opendir my $fh, $path
                      or return;
                      while (defined ($_ = readdir $fh)) {
                         next if $_ eq $updir;
@@ -1699,7 +1729,7 @@ sub idle_check {
             };
          } else {
             aioreq_pri -1;
-            aio_stat Glib::filename_from_unicode $path, sub {
+            aio_stat $path, sub {
                return unless $generation == $self->{generation};
 
                if (-d _) {
@@ -1759,11 +1789,11 @@ sub chpaths {
       $leaves = (stat $base)[3];
       $leaves -= 2; # . and ..
 
-      add $grp aio_readdir Glib::filename_from_unicode "$base/.xvpics", sub {
+      add $grp aio_readdir "$base/.xvpics", sub {
          return unless $_[0];
 
          $leaves--; # .xvpics itself
-         $xvpics{Glib::filename_to_unicode $_}++ for @{ $_[0] };
+         $xvpics{$_}++ for @{ $_[0] };
       };
 
       add $grp aio_nop sub {
@@ -1792,6 +1822,10 @@ sub chpaths {
          while ($i < @$paths) {
             my ($dir, $file) = @{ $paths->[$i++] };
 
+            # work around bugs in the Glib module early
+            utf8::downgrade $dir;
+            utf8::downgrade $file;
+
             if (exists $exclude{$file}) {
                # ignore
                $progress->increment;
@@ -1801,9 +1835,9 @@ sub chpaths {
                $progress->increment;
             } elsif ($leaves) {
                # this is faster than a normal stat on many modern filesystems
-               add $grp aio_stat Glib::filename_from_unicode "$dir/$file/$curdir", sub {
+               add $grp aio_stat "$dir/$file/$curdir", sub {
                   if (!$_[0]) { # no error
-                     add $grp aio_lstat Glib::filename_from_unicode "$dir/$file", sub {
+                     add $grp aio_lstat "$dir/$file", sub {
                         if (-d _) {
                            $leaves--;
                            push @d, [$dir, $file, F_ISDIR | F_HASPM, $directory_visited{"$dir/$file"} ? $dirv_img : $diru_img];
@@ -1871,12 +1905,12 @@ sub chpaths {
             @xvpics or return;
             my $file = pop @xvpics;
             aioreq_pri -3;
-            add $grp aio_stat Glib::filename_from_unicode "$base/$file", sub {
+            add $grp aio_stat "$base/$file", sub {
                if (!$_[0] || -d _) {
                   $progress->increment;
                } else {
                   aioreq_pri -3;
-                  add $grp aio_unlink Glib::filename_from_unicode "$self->{dir}/.xvpics/$file", sub {
+                  add $grp aio_unlink "$self->{dir}/.xvpics/$file", sub {
                      $progress->increment;
                   };
                }
@@ -1920,23 +1954,23 @@ sub do_chdir {
 sub chdir {
    my ($self, $dir, $cb) = @_;
 
-   $dir = Glib::filename_to_unicode Cwd::abs_path Glib::filename_from_unicode $dir;
+   $dir = Cwd::abs_path $dir;
 
    $directory_visited{$dir}++;
 
-   opendir my $fh, Glib::filename_from_unicode $dir
+   opendir my $fh, $dir
       or die "$dir: $!";
 
    $self->realize;
    $self->window->property_change (
       Gtk2::Gdk::Atom->intern ("_X_CWD", 0),
-      Gtk2::Gdk::Atom->intern ("UTF8_STRING", 0),
+      Gtk2::Gdk::Atom->intern ("STRING", 0),
       Gtk2::Gdk::CHARS, 'replace',
-      Encode::encode_utf8 $dir,
+      $dir,
    );
 
    $self->{dir} = $dir;
-   $self->chpaths ([map eval { [$dir, Glib::filename_to_unicode $_] }, readdir $fh], 0, $cb);
+   $self->chpaths ([map [$dir, $_], readdir $fh], 0, $cb);
 
    $self->signal_emit (chdir => $dir);
 }

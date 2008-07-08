@@ -165,7 +165,8 @@ DESCRIPTION
      ctrl-g       force generation of thumbnais for the selected files
      ctrl-s       rescan current direcory or files updates/deletes etc.
      ctrl-u       update selected (or all) icons if neccessary
-     ctrl-l       don't use, will become a plug-in eventually
+     ctrl--       unselected thumbnailed images
+     ctrl-+       keep only thumbnailed images, deselect others
 
      ^            go to parent directory (caret).
 

@@ -442,13 +442,15 @@ compare (GdkPixbuf *a, GdkPixbuf *b)
 
 MODULE = Gtk2::CV PACKAGE = Gtk2::CV::Schnauzer
 
+# currently only works for filenames (octet strings)
+
 SV *
 foldcase (SV *pathsv)
 	PROTOTYPE: $
 	CODE:
 {
 	STRLEN plen;
-        U8 *path = (U8 *)SvPVutf8 (pathsv, plen);
+        U8 *path = (U8 *)SvPV (pathsv, plen);
         U8 *pend = path + plen;
         U8 dst [plen * 6 * 3], *dstp = dst;
 
@@ -458,6 +460,8 @@ foldcase (SV *pathsv)
 
             if (ch >= 'a' && ch <= 'z')
               *dstp++ = *path++;
+            else if (ch >= 'A' && ch <= 'Z')
+              *dstp++ = *path++ + ('a' - 'A');
             else if (ch >= '0' && ch <= '9')
               {
                 STRLEN el, nl = 0;
@@ -471,12 +475,16 @@ foldcase (SV *pathsv)
                 dstp += nl;
               }
             else
+              *dstp++ = *path++;
+#if 0
+            else
               {
                 STRLEN cl;
                 to_utf8_fold (path, dstp, &cl);
                 dstp += cl;
                 path += is_utf8_char (path);
               }
+#endif
           }
 
         RETVAL = newSVpvn ((const char *)dst, dstp - dst);

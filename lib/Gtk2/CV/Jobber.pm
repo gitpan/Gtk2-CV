@@ -252,7 +252,7 @@ sub Gtk2::CV::Jobber::Job::run {
 
    if ($type->{read} && !$job->{fh}) {
       aioreq_pri -3;
-      aio_open Glib::filename_from_unicode $job->{path}, O_RDONLY, 0, sub {
+      aio_open $job->{path}, O_RDONLY, 0, sub {
          $job->{fh} = $_[0]
             or return $job->finish;
          $job->{stat} = [stat $job->{fh}]; # should be free of cost
@@ -263,7 +263,7 @@ sub Gtk2::CV::Jobber::Job::run {
       };
    } elsif ($type->{stat} && !$job->{stat}) {
       aioreq_pri -3;
-      aio_stat Glib::filename_from_unicode $job->{path}, sub {
+      aio_stat $job->{path}, sub {
          $_[0] and return $job->finish; # don't run job if stat error
          $job->{stat} = [stat _];
          $job->run;
@@ -381,6 +381,7 @@ sub new {
 sub _send {
    my ($self, $fh, $job) = @_;
 
+   delete $job->{fh};
    $job->{stat} = join "\0", @{ $job->{stat} };
 
    $job = join "\x{fcc0}", %$job;

@@ -39,7 +39,7 @@ sub new_schnauzer {
    $s->signal_connect_after (key_press_event => \&std_keys);
    $s->signal_connect (activate => sub {
       my $label = sprintf "%s (%d)",
-                  (File::Spec->splitpath ($_[1]))[2],
+                  (Glib::filename_display_name +(File::Spec->splitpath ($_[1]))[2]),
                   -s $_[1];
       $info->set_label ($label);
       $viewer->load_image ($_[1]) if $viewer; # TODO: error, or chose ANY viewer
@@ -171,15 +171,15 @@ if (@ARGV) {
 
    if (@ARGV == 1 && $ARGV[0] eq "-0r") {
       local $/;
-      $schnauzer->set_paths ([map Glib::filename_to_unicode $_, split /\x00/, <STDIN>], 1, $show_first);
+      $schnauzer->set_paths ([split /\x00/, <STDIN>], 1, $show_first);
    } elsif (@ARGV == 1 && -d $ARGV[0]) {
-      $schnauzer->set_dir (Glib::filename_to_unicode shift, $show_first);
+      $schnauzer->set_dir (shift, $show_first);
    } else {
       if ($ARGV[0] eq "-g") {
          shift @ARGV;
          @ARGV = map +(File::Glob::bsd_glob $_, File::Glob::GLOB_BRACE | File::Glob::GLOB_QUOTE), @ARGV;
       }
-      $schnauzer->set_paths ([map Glib::filename_to_unicode $_, @ARGV], 1, $show_first);
+      $schnauzer->set_paths ([@ARGV], 1, $show_first);
    }
 } else {
    $schnauzer->set_dir (File::Spec->curdir, sub {
@@ -371,7 +371,8 @@ You can use the following keys in the schnauzer window:
  ctrl-g       force generation of thumbnais for the selected files
  ctrl-s       rescan current direcory or files updates/deletes etc.
  ctrl-u       update selected (or all) icons if neccessary
- ctrl-l       don't use, will become a plug-in eventually
+ ctrl--       unselected thumbnailed images
+ ctrl-+       keep only thumbnailed images, deselect others
 
  ^            go to parent directory (caret).
 

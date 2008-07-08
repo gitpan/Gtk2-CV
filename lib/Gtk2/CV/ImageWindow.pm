@@ -27,13 +27,14 @@ use List::Util qw(min max);
 use Scalar::Util;
 use POSIX ();
 use FileHandle ();
+use Fcntl ();
 
 my $title_image;
 
 use Glib::Object::Subclass
    Gtk2::Window,
    properties => [
-      Glib::ParamSpec->string ("path", "Pathname", "The image pathname", "", [qw(writable readable)]),
+      Glib::ParamSpec->scalar ("path", "Pathname", "The image pathname", [qw(writable readable)]),
    ],
    signals => {
       image_changed        => { flags => [qw/run-first/], return_type => undef, param_types => [] },
@@ -59,6 +60,7 @@ sub INIT_INSTANCE {
 
    $self->set_role ("image window");
 
+   $self->signal_connect (destroy => sub { $self->kill_player });
    $self->signal_connect (realize => sub { $_[0]->do_realize; 0 });
    $self->signal_connect (map_event => sub { $_[0]->check_screen_size; $_[0]->auto_position (($_[0]->allocation->values)[2,3]) });
    $self->signal_connect (expose_event => sub {
@@ -105,12 +107,6 @@ sub SET_PROPERTY {
    } else {
       $self->{$pspec} = $newval;
    }
-}
-
-sub FINALIZE_INSTANCE {
-   my ($self) = @_;
-
-   $self->kill_player;
 }
 
 sub do_image_changed {
@@ -210,12 +206,15 @@ my %othertypes = (
    "Microsoft ASF"  => "video/x-asf",
    "RealMedia file" => "video/x-rm",
    "Matroska data"  => "video/x-ogg",
+   "Ogg data, OGM video (XviD)" => "video/x-ogg",
+   "Ogg data, OGM video (DivX 5)" => "video/x-ogg",
    "RIFF (little-endian) data, wrapped MPEG-1 (CDXA)" => "video/mpeg",
 );
 
 my %exttypes = (
    mpg  => "video/mpeg",
    mpeg => "video/mpeg",
+   ogm  => "video/x-ogg",
 );
 
 #sub gstreamer_setup {
@@ -286,7 +285,7 @@ sub load_image {
       # should, but can't
 
    } elsif ($type eq "image/jpeg") {
-      $image = Gtk2::CV::load_jpeg Glib::filename_from_unicode $path;
+      $image = Gtk2::CV::load_jpeg $path;
 
    } elsif ($type eq "image/jp2") { # jpeg2000 hack
       open my $pnm, "-|:raw", "jasper", "--input", $path, "--output-format", "pnm"
@@ -366,6 +365,7 @@ sub load_image {
 
          pipe my $rfh, $self->{mplayer_fh};
          $self->{mplayer_fh}->autoflush (1);
+         fcntl $self->{mplayer_fh}, &Fcntl::F_SETFD, &Fcntl::FD_CLOEXEC;
 
          $self->{player_pid} = fork;
 

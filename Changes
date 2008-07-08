@@ -6,6 +6,19 @@ TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
 TODO: cv file => rescan => 0 byte size if file no longer exists
 
+1.53 Tue Jul  8 14:03:12 CEST 2008
+	- only warn about pipe close failures in printdialog, do not die.
+	- do not try to handle filenames in unicode, instead, only
+          convert at display time.
+	- kill any media players on destroy and not in the finaliser,
+          as gtk+'s lazy finalisation and mplayers stubbornness to
+          continue running without control socket and output window
+          can be annoying.
+        - add recursive delete (lamely implemented using rm -rf).
+        - update progressbar after a timeout in addition to after
+          enough work has done to ensure it is being displayed
+          quickly for long jobs.
+
 1.51 Sun Jan 27 17:48:14 CET 2008
 	- run more stats in parallel in schnauzer scanning.
         - do not deselect cursor on scroll if a range is selected.

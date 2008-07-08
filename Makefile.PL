@@ -46,6 +46,7 @@ WriteMakefile(
 		    Gtk2::GladeXML      => 0.93,
 #                    GStreamer		=> 0.09,
 		    IO::AIO             => 2.20,
+#		    JSON::XS            => 2.2,
 		   },
     DIR		=> [],
     NAME	=> 'Gtk2::CV',

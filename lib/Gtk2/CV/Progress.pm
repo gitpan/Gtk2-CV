@@ -41,6 +41,7 @@ sub new {
 
    $self->{work} = 1 unless defined $self->{work};
    $self->{next} = time + INITIAL;
+   $self->update ($self->{cur});
 
    $self
 }
@@ -57,6 +58,9 @@ sub update {
    my $now = time;
 
    if ($now > $self->{next}) {
+      remove Glib::Source delete $self->{timeout}
+         if $self->{timeout};
+
       Gtk2::CV::disable_aio;
 
       if (!$self->{window}) {
@@ -95,6 +99,12 @@ sub update {
       Gtk2->main_iteration while Gtk2->events_pending;
 
       Gtk2::CV::enable_aio;
+   } else {
+      $self->{timeout} ||= add Glib::Timeout 1000 * ($self->{next} - $now), sub {
+         $self->{next} = 0;
+         $self->update ($self->{cur});
+         0
+      };
    }
 }
 
