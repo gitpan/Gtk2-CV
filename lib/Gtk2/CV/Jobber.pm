@@ -30,13 +30,10 @@ Global variable containing all jobs, indexed by full path.
 our %jobs;
 our @jobs; # global job order
 
-my %in_progress;
-
-my %type;
-my @type; # type order
+our %type;
+our @type; # type order
 
 my $disabled;
-my @idle_slave;
 
 my $MAXFORK = int 1 + 1.5 * do {
    local $/;
@@ -52,6 +49,8 @@ my %class_limit = (
    fork  => $MAXFORK,
 );
 
+my @idle_slave;
+
 my $progress;
 
 sub scheduler {
@@ -61,8 +60,6 @@ job:
 
       my $path = $jobs[-$idx];
 
-      next if $in_progress{$path};
-      
       my $types = $jobs{$path};
       my @types = keys %$types;
 
@@ -99,7 +96,12 @@ job:
 
    undef $progress;
 
-   (pop @idle_slave)->destroy while @idle_slave;
+#   (pop @idle_slave)->destroy while @idle_slave;
+}
+
+sub start_slaves {
+   push @idle_slave, new Gtk2::CV::Jobber::Slave
+      while @idle_slave < $MAXFORK;
 }
 
 =item Gtk2::CV::Jobber::define $type, [option => $value, ...], $cb
@@ -114,6 +116,7 @@ processing.
  fork    => (lots of restrictions)
  class   =>
  maxread =>
+ hide    => true if the file(spec) will go away via this job
  cb      => callback
 
 =cut
@@ -367,6 +370,18 @@ sub new {
                          &Glib::G_PRIORITY_HIGH;
 
    } else {
+      {
+         $SIG{PIPE} = $SIG{TERM} = $SIG{QUIT} = 'DEFAULT';
+         my $sigs = new POSIX::SigSet;
+         $sigs->fillset;
+         $sigs->delset (&POSIX::SIGPIPE);
+         $sigs->delset (&POSIX::SIGTERM);
+         $sigs->delset (&POSIX::SIGQUIT);
+         POSIX::sigprocmask &POSIX::SIG_SETMASK, $sigs;
+      }
+
+      delete $SIG{USR1};
+
       close delete $self->{m};
 
       eval { $self->slave };

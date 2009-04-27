@@ -217,7 +217,7 @@ FILES
     This will load a plug-in, but only if the machine *ether* is reachable
     (supposedly the plug-in is networked in some way :).
 
-ENVIRONMENT
+ENVIRONMENT VARIABLES
     CV_EDITOR
         The program that gets executed when the user presses "CTRL-e" in the
         Schnauzer or image window. The default is "gimp".
@@ -231,8 +231,15 @@ ENVIRONMENT
 
     CV_TRASHCAN
         When set, must point to a directory where all files that are deleted
-        are moved to. If unset, files that are deleted are really being
-        deleted.
+        by the "Delete Physically" (ctrl-d) action are moved to (other
+        deletion actions still delete!). If unset, files that are deleted
+        are really being deleted.
+
+SIGNALS
+    Sending CV a SIGUSR1 signal will cause all image viewers to reload the
+    currently loaded image. This is useful if you use CV as a viewer for
+    changing data - just run it in the background with some path and each
+    time the image changes, send it a SIGUSR1.
 
 SECURITY CONSIDERATIONS
     CV uses Pixbuf to load non-JPEG images. Pixbuf is not considered safe

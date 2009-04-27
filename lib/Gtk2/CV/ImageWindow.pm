@@ -160,6 +160,7 @@ sub set_image {
    $self->{type}        = $type;
    $self->{image}       = $image;
    $self->{tran_rotate} = 0;
+   $self->{path}        = undef;
 
    $self->set_subimage ($image);
 }
@@ -402,6 +403,12 @@ sub load_image {
    } else {
       $self->clear_image;
    }
+}
+
+sub reload {
+   my ($self) = @_;
+
+   $self->load_image ($self->{path}) if defined $self->{path};
 }
 
 sub check_screen_size {
@@ -774,7 +781,7 @@ sub handle_key {
             or die "can only 'a'pply disk-based images";
 
          $self->{type} eq "image/jpeg"
-            or die "image ahs type '%self->{type}', but I can only 'a'pply jpeg images";
+            or die "image has type '$self->{type}', but I can only 'a'pply jpeg images";
          
          my $rot = $self->{tran_rotate} %= 360;
 

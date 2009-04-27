@@ -33,13 +33,14 @@ sub new {
 
    $d->get_widget ("destination")->set (text => $ENV{CV_PRINT_DESTINATION} || "| lpr");
 
-   my $menu = $d->get_widget ("papersize")->get_menu;
+   my $menu = new Gtk2::Menu;
    for (Gtk2::CV::PostScript->papersizes) {
       my ($code, $name, $w, $h) = @$_;
       $menu->append (my $item = new Gtk2::MenuItem $name);
       $item->set_name ($code);
    }
    $menu->show_all;
+   $d->get_widget ("papersize")->set_menu ($menu);
 
    $d->get_widget ("papersize")->set_history (0);
 
@@ -84,7 +85,7 @@ sub print {
 
    (new Gtk2::CV::PostScript fh => $fh, %arg, %$self)->print;
 
-   close $fh or die "$arg{destination}: $!";
+   close $fh or warn "$arg{destination}: $!";
 }
 
 =back

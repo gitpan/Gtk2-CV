@@ -6,6 +6,29 @@ TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
 TODO: cv file => rescan => 0 byte size if file no longer exists
 
+1.54 Mon Apr 27 04:23:33 CEST 2009
+	- implement automatic reloading on SIGUSR1, as per suggestions
+          by Trevor Cordes.
+        - remove -\d\d\d file ending first on move collision.
+	- ctrl-shift-d now deletes despite CV_TRASHCAN.
+	- very hacky video thumbnailing via mplayer.
+	- ctrl-d errornously worked like ctrl-shift-d (cost 50gb of data).
+	- work around glib/gtk's filename corruption bugs when saving thumbnails
+          by writing the file ourselves.
+        - work around some other glib/gtk string corruption bugs.
+	- really only warn about pipe close failures :/.
+        - add hide attribute to jobs that will remove the file and do not
+          show those files in the schnauzer (but in-progress jobs
+          will still be shown, unfortunately).
+        - work around some more unicode issues in perl.
+        - correctly parse .rm as file extension in the schnauzer.
+        - always pre-fork the maximum number of worker slaves,
+          as forking later can consume way too much memory.
+	- update glade to work around annoying warnings in newer gtk.
+        - work around changes in newer glade. *sigh*.
+        - document that we need libgtk2.0-dev, too.
+        - avoid endless loops in mv.
+
 1.53 Tue Jul  8 14:03:12 CEST 2008
 	- only warn about pipe close failures in printdialog, do not die.
 	- do not try to handle filenames in unicode, instead, only

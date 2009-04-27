@@ -1,6 +1,7 @@
 MANIFEST
 Changes
 Makefile.PL
+typemap
 
 lib/Gtk2/CV.pm
 lib/Gtk2/CV/ImageWindow.pm

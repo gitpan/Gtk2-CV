@@ -3,6 +3,7 @@
 use Cwd ();
 use Encode ();
 use File::Glob ();
+use Scalar::Util ();
 
 use Gtk2 -init;
 use Gtk2::Gdk::Keysyms;
@@ -19,6 +20,8 @@ BEGIN {
 
 use Gtk2::CV::Plugin::NameCluster;
 use Gtk2::CV::Plugin::RCluster;
+
+Gtk2::CV::Jobber::start_slaves;
 
 Gtk2::Rc->parse (Gtk2::CV::find_rcfile "gtkrc");
 
@@ -50,8 +53,20 @@ sub new_schnauzer {
    $s
 }
 
+our %VIEWER; # global viewer container so we can propagate signals
+
+$SIG{USR1} = sub {
+   # I assume glib calls us in a safe enough context to create an idle watcher
+   add Glib::Idle sub {
+      $_->reload for values %VIEWER;
+      0
+   };
+};
+
 sub new_viewer {
    my $self = new Gtk2::CV::ImageWindow;
+
+   Scalar::Util::weaken ($VIEWER{$self+0} = $self);
 
    $viewer_count++;
 
@@ -75,6 +90,7 @@ sub new_viewer {
    });
    $self->signal_connect (delete_event => sub { $_[0]->destroy; 0 });
    $self->signal_connect (destroy => sub {
+      delete $VIEWER{$_[0]+0};
       $viewer = undef if $viewer == $_[0];
 
       main_quit Gtk2 unless --$viewer_count;
@@ -432,7 +448,7 @@ Example:
 This will load a plug-in, but only if the machine I<ether> is reachable
 (supposedly the plug-in is networked in some way :).
 
-=head1 ENVIRONMENT
+=head1 ENVIRONMENT VARIABLES
 
 =over 4
 
@@ -452,10 +468,19 @@ The default (perl-style) destination to use in the print dialog.
 
 =item CV_TRASHCAN
 
-When set, must point to a directory where all files that are deleted are
-moved to. If unset, files that are deleted are really being deleted.
+When set, must point to a directory where all files that are deleted by
+the "Delete Physically" (ctrl-d) action are moved to (other deletion
+actions still delete!). If unset, files that are deleted are really being
+deleted.
 
 =back
+
+=head1 SIGNALS
+
+Sending CV a SIGUSR1 signal will cause all image viewers to reload the
+currently loaded image. This is useful if you use CV as a viewer for
+changing data - just run it in the background with some path and each time
+the image changes, send it a SIGUSR1.
 
 =head1 SECURITY CONSIDERATIONS
 

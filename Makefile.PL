@@ -9,6 +9,7 @@ print <<EOF;
 ** apt-get install libextutils-depends-perl
 ** apt-get install libgtk2-ex-podviewer-perl libgtk2-gladexml-perl
 ** apt-get install libmagic-dev libjpeg62-dev libglib-perl libgtk2-perl
+** apt-get install libgtk2.0-dev
 **
 
 EOF
@@ -44,7 +45,7 @@ WriteMakefile(
 		    Gtk2		=> 1.08,
 		    Gtk2::Ex::PodViewer	=> 0.17,
 		    Gtk2::GladeXML      => 0.93,
-#                    GStreamer		=> 0.09,
+#                    GStreamer		=> 0.11,
 		    IO::AIO             => 2.20,
 #		    JSON::XS            => 2.2,
 		   },

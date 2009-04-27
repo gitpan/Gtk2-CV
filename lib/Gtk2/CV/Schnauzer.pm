@@ -44,6 +44,7 @@ use List::Util qw(min max);
 
 use File::Spec;
 use File::Copy;
+use File::Temp ();
 use Cwd ();
 
 use POSIX qw(ceil ENOTDIR _exit strftime);
@@ -162,6 +163,7 @@ my %ext_logo = (
 
    rm   => "rm",
    ram  => "rm",
+   rmvb => "rm",
 
    txt  => "txt",
    csv  => "txt",
@@ -189,7 +191,7 @@ my $dirs_layer = Gtk2::CV::require_image "dir-symlink.png";
 my %file_img = do {
    my %logo = reverse %ext_logo;
 
-   map +($_ => img "file-$_.png"), keys %logo;
+   map +($_ => img "file-$_.png"), keys %logo
 };
 
 # get pathname of corresponding xvpics-dir
@@ -214,7 +216,7 @@ sub dirname($) {
 
 # filename => extension
 sub extension {
-   $_[0] =~ /\.([a-z0-9]{3,4})[\.\-_0-9~]*$/i
+   $_[0] =~ /\.([a-z0-9]{2,4})[\.\-_0-9~]*$/i
       ? lc $1 : ();
 }
 
@@ -266,6 +268,68 @@ sub {
    $job->finish;
 };
 
+sub video_thumbnail_at {
+   my ($path, $time, $w) = @_;
+
+   utf8::downgrade $path; # work around bugs in Gtk2
+   
+   if (0) {
+      # fucking ffmpeg can't be told to be quiet except on errors
+      open my $fh, "exec ffmpeg -i \Q$path\E -ss $time -vframes 1 -an -f rawvideo -vcodec ppm -y /dev/fd/3 3>&1 1>&2 2>/dev/null |"
+#   open my $fh, "exec totem-gstreamer-video-thumbnailer -t $time -s $w \Q$path\E /dev/fd/3 3>&1 1>&2 |"
+         or die "ffmpeg: $!";
+
+      my $pb = new_with_type Gtk2::Gdk::PixbufLoader "pnm";
+      local $/; $pb->write ("" . scalar <$fh>);
+      $pb->close;
+      return $pb->get_pixbuf;
+   } else {
+      my $dir = File::Temp::tempdir DIR => "/dev/shm"
+         or return;
+
+      system "exec mplayer -really-quiet -nosound -ss $time -frames 2 -vo pnm:outdir=$dir \Q$path\E >/dev/null 2>&1 </dev/null";
+
+      my $pb = eval { new_from_file Gtk2::Gdk::Pixbuf "$dir/00000002.ppm" };
+
+      unlink "$dir/00000001.ppm";
+      unlink "$dir/00000002.ppm";
+      rmdir $dir;
+
+      return $pb;
+   }
+}
+
+sub video_thumbnail {
+   my ($path) = @_;
+
+   # do primitive filetype detection - gstreamer hates us otherwise
+#   return unless $path =~ /\.(?: asf | wmv | avi | mpg | mpeg )$/xi;
+
+   my $t1 =        video_thumbnail_at $path,   0, 512 or return;
+   my $t2 = $t1 && video_thumbnail_at $path,   5, 512;
+   my $t3 = $t2 && video_thumbnail_at $path,  30, 512;
+   my $t4 = $t3 && video_thumbnail_at $path, 180, 512;
+
+   # assume all four images to have the same size
+   my $tw = $t1->get_width;
+   my $th = $t1->get_height;
+
+   my $pb = new Gtk2::Gdk::Pixbuf "rgb", 0, 8, $tw * 2, $th * 2;
+   $pb->fill (0xff69b400); # pinku eiga *g*
+
+   # make sure all frames have the right size
+   $t2 = $t2->scale_simple ($tw, $th, "bilinear") if $t2;
+   $t3 = $t3->scale_simple ($tw, $th, "bilinear") if $t3;
+   $t4 = $t4->scale_simple ($tw, $th, "bilinear") if $t4;
+
+   $t1->copy_area (0, 0, $tw, $th, $pb,   0,   0);
+   $t2->copy_area (0, 0, $tw, $th, $pb, $tw,   0) if $t2;
+   $t3->copy_area (0, 0, $tw, $th, $pb,   0, $th) if $t3;
+   $t4->copy_area (0, 0, $tw, $th, $pb, $tw, $th) if $t4;
+
+   return $pb;
+}
+
 # generate a thumbnail for a file
 Gtk2::CV::Jobber::define gen_thumb =>
    pri   => -1000,
@@ -281,11 +345,15 @@ sub {
       die "can only generate thumbnail for regular files"
          unless Fcntl::S_ISREG ($job->{stat}[2]);
 
+      utf8::downgrade $path;
       mkdir +(dirname $path) . "/.xvpics", 0777;
 
       my $pb = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg $path, 1 }
                || eval { new_from_file_at_scale Gtk2::Gdk::Pixbuf $path, IW, IH, 1 }
+               || eval { video_thumbnail $path }
                || Gtk2::CV::require_image "error.png";
+
+      utf8::downgrade $path; # Gtk2::Gdk::Pixbuf upgrades :/
 
       my ($w, $h) = ($pb->get_width, $pb->get_height);
 
@@ -298,11 +366,18 @@ sub {
       }
 
       $pb = Gtk2::CV::dealpha $pb->scale_simple ($w, $h, 'tiles');
-      $pb->save (xvpic $path, "jpeg", quality => 95);
+
+      open my $fh, ">:raw", xvpic $path
+         or die "xvpic($path): $!";
+      syswrite $fh, $pb->save_to_buffer ("jpeg", quality => 95);;
+      close $fh;
+
       $job->{data} = $pb->get_pixels . pack "SSS", $w, $h, $pb->get_rowstride;
 
       utime $job->{stat}[9], $job->{stat}[9], xvpic $path;
    };
+
+   warn "$@" if $@;#d#
 
    $job->finish;
 };
@@ -327,6 +402,7 @@ sub {
 Gtk2::CV::Jobber::define rm_rf =>
    pri   => 1000,
    fork  => 1,
+   hide  => 1,
 sub {
    my ($job) = @_;
 
@@ -339,30 +415,24 @@ sub {
 Gtk2::CV::Jobber::define unlink =>
    pri   => 1000,
    class => "stat",
+   hide  => 1,
 sub {
    my ($job) = @_;
 
    $Gtk2::CV::Jobber::jobs{$job->{path}} = { }; # no further jobs make sense
 
-   if (exists $ENV{CV_TRASHCAN}) {
-#      mkdir "$ENV{CV_TRASHCAN}/$1" if $job->{path} =~ /^(.*)\//s;
-      Gtk2::CV::Jobber::submit mv => $job->{path}, $ENV{CV_TRASHCAN};
+   aioreq_pri -2;
+   aio_unlink $job->{path}, sub {
+      my $status = shift;
 
-      $job->finish;
-   } else {
-      aioreq_pri -2;
-      aio_unlink $job->{path}, sub {
-         my $status = shift;
-
-         aio_unlink xvpic $job->{path}, sub {
-            aioreq_pri -4;
-            aio_rmdir xvdir $job->{path}, sub {
-               $job->{data} = $status;
-               $job->finish;
-            };
+      aio_unlink xvpic $job->{path}, sub {
+         aioreq_pri -4;
+         aio_rmdir xvdir $job->{path}, sub {
+            $job->{data} = $status;
+            $job->finish;
          };
       };
-   }
+   };
 };
 
 Gtk2::CV::Jobber::define unlink_thumb =>
@@ -383,6 +453,7 @@ sub {
 Gtk2::CV::Jobber::define mv =>
    pri   => -2000,
    class => "read",
+   hide  => 1,
 sub {
    my ($job) = @_;
    my $src = $job->{path};
@@ -397,6 +468,8 @@ sub {
       my $basedst = $dst;
       my $idx = 0;
 
+      1 while $basedst =~ s/-\d\d\d$//;
+
       my $try_open; $try_open = sub {
          aioreq_pri -2;
          aio_open $dst, O_WRONLY | O_CREAT | O_EXCL, 0200, sub {
@@ -404,10 +477,9 @@ sub {
                aioreq_pri -2;
                aio_move $src, $dst, sub {
                   if ($_[0]) {
-                     my $errno = "$!";
                      close $fh;
+                     print "$src => $dst [ERROR $1]\n";
                      aio_unlink $dst, sub {
-                        print "$src => $dst [ERROR $errno]\n";
                         $job->finish;
                      };
                   } else {
@@ -421,9 +493,12 @@ sub {
                      };
                   }
                };
-            } else {
+            } elsif ($!{EEXIST}) {
                $dst = sprintf "%s-%03d", $basedst, $idx++;
                $try_open->();
+            } else {
+               print "$src => $dst [ERROR $!]\n";
+               $job->finish;
             }
          };
       };
@@ -1248,8 +1323,11 @@ sub unlink {
    Gtk2::CV::Jobber::inhibit {
       for (sort { $b <=> $a } @idx) {
          my $e = $self->{entry}[$_];
-         if ($e->[2] & F_ISDIR) {
-            Gtk2::CV::Jobber::submit rm_rf => "$e->[0]/$e->[1]";
+         if (exists $ENV{CV_TRASHCAN} and !$recursive) {
+            Gtk2::CV::Jobber::submit mv => "$e->[0]/$e->[1]", $ENV{CV_TRASHCAN};
+         } elsif ($e->[2] & F_ISDIR) {
+            Gtk2::CV::Jobber::submit rm_rf => "$e->[0]/$e->[1]"
+               if $recursive;
          } else {
             Gtk2::CV::Jobber::submit unlink => "$e->[0]/$e->[1]";
          }
@@ -1430,6 +1508,23 @@ member has been changed in any way.
 sub entry_changed {
    my ($self) = @_;
 
+   # remove entries for which a job exists that will eventually delete it (hide attr)
+   # unfortunately, this skips in-progress jobs. bah, as we get the jobber_update
+   # before the job finishes.
+   {
+      my %delete;
+
+      for (grep exists $Gtk2::CV::Jobber::jobs{"$_->[0]/$_->[1]"}, @{ $self->{entry} }) {
+         for my $type (keys %{ $Gtk2::CV::Jobber::jobs{"$_->[0]/$_->[1]"} }) {
+            undef $delete{$_} if $Gtk2::CV::Jobber::type{$type}{hide};
+         }
+      }
+
+      # a rare event
+      $self->{entry} = [grep !exists $delete{$_}, @{ $self->{entry} }]
+         if %delete;
+   }
+
    delete $self->{map};
    delete $self->{idle_check_done};
    delete $self->{idle_check_idx};
@@ -1568,9 +1663,6 @@ outer:
             my $path = "$entry->[0]/$entry->[1]";
             my $text_gc;
 
-            push @jobs, $path
-               if exists $Gtk2::CV::Jobber::jobs{$path};
-
             # selected?
             if (exists $self->{sel}{$idx}) {
                $self->{window}->draw_rectangle ($black_gc, 1,
@@ -1580,7 +1672,9 @@ outer:
                $text_gc = $black_gc;
             }
 
-            if (exists $Gtk2::CV::Jobber::jobs{"$entry->[0]/$entry->[1]"}) {
+            if (exists $Gtk2::CV::Jobber::jobs{$path}) {
+               push @jobs, $path;
+
                $self->{window}->draw_rectangle ($self->style->dark_gc ('normal'), 1,
                        $x + IX * 0.1, $y, IW + IX * 0.8, IH);
             }
@@ -1601,6 +1695,8 @@ outer:
                      $x + (IX + IW - $pw) * 0.5,
                      $y + (     IH - $ph) * 0.5,
                      $pw, $ph);
+
+            utf8::downgrade $entry->[1];#d# ugly workaround for Glib-bug, costs performance like nothing :)
 
             $layout->set_text (Glib::filename_display_name $entry->[1]);
 

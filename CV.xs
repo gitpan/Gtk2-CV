@@ -25,6 +25,8 @@
 
 #define ELLIPSIS "\xe2\x80\xa6"
 
+typedef char *octet_string;
+
 struct jpg_err_mgr
 {
   struct jpeg_error_mgr err;
@@ -204,7 +206,7 @@ common_prefix_length (a, b)
         RETVAL
 
 const char *
-magic (const char *path)
+magic (octet_string path)
 	CODE:
 {
 	static magic_t cookie;
@@ -225,7 +227,7 @@ magic (const char *path)
         RETVAL
 
 const char *
-magic_mime (const char *path)
+magic_mime (octet_string path)
 	CODE:
 {
 	static magic_t cookie;
