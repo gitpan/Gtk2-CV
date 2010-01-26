@@ -16,6 +16,7 @@ Gtk2::CV::ImageWindow - a window widget displaying an image or other media
 
 package Gtk2::CV::ImageWindow;
 
+use common::sense;
 use Gtk2;
 use Gtk2::Gdk::Keysyms;
 
@@ -32,7 +33,7 @@ use Fcntl ();
 my $title_image;
 
 use Glib::Object::Subclass
-   Gtk2::Window,
+   Gtk2::Window::,
    properties => [
       Glib::ParamSpec->scalar ("path", "Pathname", "The image pathname", [qw(writable readable)]),
    ],
@@ -295,6 +296,10 @@ sub load_image {
       local $/; $loader->write (<$pnm>);
       $loader->close;
       $image = $loader->get_pixbuf;
+
+   } elsif ($type eq "application/pdf") {
+      # hack, sorry, unsupported, should use mimetools etc.
+      system "xpdf \Q$path\E &";
 
    } elsif ($type =~ /^image\//) {
       $image = new_from_file Gtk2::Gdk::Pixbuf $path;

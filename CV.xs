@@ -16,6 +16,8 @@
 #include <gperl.h>
 #include <gtk2perl.h>
 
+#include <assert.h>
+
 #define IW 80 /* MUST match Schnauzer.pm! */
 #define IH 60 /* MUST match Schnauzer.pm! */
 
@@ -402,6 +404,7 @@ compare (GdkPixbuf *a, GdkPixbuf *b)
 {
 	int w  = gdk_pixbuf_get_width  (a);
 	int h  = gdk_pixbuf_get_height (a);
+
         int sa = gdk_pixbuf_get_rowstride (a);
         int sb = gdk_pixbuf_get_rowstride (b);
 

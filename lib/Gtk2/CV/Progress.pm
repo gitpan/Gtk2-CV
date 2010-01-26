@@ -16,6 +16,7 @@ Gtk2::CV::Progress - a simple progress widget
 
 package Gtk2::CV::Progress;
 
+use common::sense;
 use Gtk2;
 use Gtk2::CV;
 

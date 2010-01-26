@@ -10,6 +10,7 @@ lib/Gtk2/CV/PostScript.pm
 lib/Gtk2/CV/PrintDialog.pm
 lib/Gtk2/CV/Plugin.pm
 lib/Gtk2/CV/Plugin/NameCluster.pm
+lib/Gtk2/CV/Plugin/PatRenamer.pm
 lib/Gtk2/CV/Plugin/RCluster.pm
 lib/Gtk2/CV/Progress.pm
 lib/Gtk2/CV/Jobber.pm
@@ -51,4 +52,5 @@ images/file-zip.png
 
 bin/cv
 
-META.yml
+META.yml                                 Module meta-data (added by MakeMaker)
+META.json                                Module meta-data (added by MakeMaker)

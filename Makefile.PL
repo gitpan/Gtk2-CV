@@ -41,12 +41,13 @@ WriteMakefile(
 	            SUFFIX	=> '.gz',
 	           },
     PREREQ_PM	=> {
+                    common::sense	=> 2.03,
 		    Glib		=> 1.08,
 		    Gtk2		=> 1.08,
 		    Gtk2::Ex::PodViewer	=> 0.17,
 		    Gtk2::GladeXML      => 0.93,
 #                    GStreamer		=> 0.11,
-		    IO::AIO             => 2.20,
+		    IO::AIO             => 3.2, # for aio_readdirx
 #		    JSON::XS            => 2.2,
 		   },
     DIR		=> [],
@@ -62,6 +63,7 @@ WriteMakefile(
        'lib/Gtk2/CV/Jobber.pm'			=> '$(INST_LIBDIR)/CV/Jobber.pm',
        'lib/Gtk2/CV/Plugin.pm'			=> '$(INST_LIBDIR)/CV/Plugin.pm',
        'lib/Gtk2/CV/Plugin/NameCluster.pm'	=> '$(INST_LIBDIR)/CV/Plugin/NameCluster.pm',
+       'lib/Gtk2/CV/Plugin/PatRenamer.pm'	=> '$(INST_LIBDIR)/CV/Plugin/PatRenamer.pm',
        'lib/Gtk2/CV/Plugin/RCluster.pm'		=> '$(INST_LIBDIR)/CV/Plugin/RCluster.pm',
        'lib/Gtk2/CV/Progress.pm'		=> '$(INST_LIBDIR)/CV/Progress.pm',
        'lib/Gtk2/CV.pm'				=> '$(INST_LIBDIR)/CV.pm',

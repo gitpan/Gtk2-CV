@@ -1,5 +1,7 @@
 #!/opt/bin/perl
 
+use common::sense;
+
 use Cwd ();
 use Encode ();
 use File::Glob ();
@@ -20,6 +22,7 @@ BEGIN {
 
 use Gtk2::CV::Plugin::NameCluster;
 use Gtk2::CV::Plugin::RCluster;
+use Gtk2::CV::Plugin::PatRenamer;
 
 Gtk2::CV::Jobber::start_slaves;
 

@@ -16,6 +16,7 @@ Gtk2::CV::PrintDialog - the CV print dialog widget
 
 package Gtk2::CV::PrintDialog;
 
+use common::sense;
 use Gtk2;
 use Gtk2::Gdk::Keysyms;
 

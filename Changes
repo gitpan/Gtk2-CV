@@ -6,6 +6,16 @@ TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
 TODO: cv file => rescan => 0 byte size if file no longer exists
 
+1.55 Tue Jan 26 03:18:45 CET 2010
+	- schnauzer did usually not give the corretc number for
+          "# entries selected".
+	- added new "renamer" plugin that is useful for mass renames
+          of very similar filenames.
+	- apply a heavy dose of common::sense.
+	- enable assert's (which perl disables...).
+        - take advantage of IO::AIO::aio_readdirx.
+        - speed up file move duplicate detection.
+
 1.54 Mon Apr 27 04:23:33 CEST 2009
 	- implement automatic reloading on SIGUSR1, as per suggestions
           by Trevor Cordes.

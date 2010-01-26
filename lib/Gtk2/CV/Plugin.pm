@@ -21,6 +21,8 @@ Gtk2::CV::Plugin - plugin superclass and nonexistent documentation
 
 package Gtk2::CV::Plugin;
 
+use common::sense;
+
 my %registry;
 
 sub import {

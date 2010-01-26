@@ -14,10 +14,12 @@ Gtk2::CV::Jobber - a job queue mechanism for Gtk2::CV
 
 package Gtk2::CV::Jobber;
 
+use common::sense;
 use POSIX ();
 
 use Scalar::Util ();
 use IO::AIO;
+use Fcntl ();
 
 use Gtk2::CV::Progress;
 
@@ -72,7 +74,7 @@ job:
             if ($class_limit{$class}) {
                $class_limit{$class}--;
 
-               my $job = bless delete $types->{$type}, Gtk2::CV::Jobber::Job;
+               my $job = bless delete $types->{$type}, Gtk2::CV::Jobber::Job::;
 
                $job->{path} = $path;
                $job->{type} = $type;
@@ -255,7 +257,7 @@ sub Gtk2::CV::Jobber::Job::run {
 
    if ($type->{read} && !$job->{fh}) {
       aioreq_pri -3;
-      aio_open $job->{path}, O_RDONLY, 0, sub {
+      aio_open $job->{path}, Fcntl::O_RDONLY, 0, sub {
          $job->{fh} = $_[0]
             or return $job->finish;
          $job->{stat} = [stat $job->{fh}]; # should be free of cost
@@ -425,7 +427,7 @@ sub _recv {
    } while length $job < $len;
 
    utf8::decode $job;
-   my $job = bless { split /\x{fcc0}/, $job }, Gtk2::CV::Jobber::Job;
+   my $job = bless { split /\x{fcc0}/, $job }, Gtk2::CV::Jobber::Job::;
 
    $job->{stat} = [ split /\0/, $job->{stat} ];
 

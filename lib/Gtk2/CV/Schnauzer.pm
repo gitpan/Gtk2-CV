@@ -21,6 +21,7 @@ use Glib::Object::Subclass Gtk2::DrawingArea,
 
 package Gtk2::CV::Schnauzer;
 
+use common::sense;
 use integer;
 
 use Gtk2;
@@ -30,14 +31,14 @@ use Gtk2::Gdk::Keysyms;
 use Gtk2::CV;
 
 use Glib::Object::Subclass
-   Gtk2::VBox,
+   Gtk2::VBox::,
    signals => {
-      activate          => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
-      popup             => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar, Gtk2::Gdk::Event] },
-      popup_selected    => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu, Glib::Scalar] },
-      selection_changed => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
+      activate          => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar::] },
+      popup             => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu::, Glib::Scalar::, Gtk2::Gdk::Event::] },
+      popup_selected    => { flags => [qw/run-first/], return_type => undef, param_types => [Gtk2::Menu::, Glib::Scalar::] },
+      selection_changed => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar::] },
       chpaths           => { flags => [qw/run-first/], return_type => undef, param_types => [] },
-      chdir             => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar] },
+      chdir             => { flags => [qw/run-first/], return_type => undef, param_types => [Glib::Scalar::] },
    };
 
 use List::Util qw(min max);
@@ -56,9 +57,9 @@ use IO::AIO;
 
 use Gtk2::CV::Jobber;
 
-use base Gtk2::CV::Jobber::Client;
+use base Gtk2::CV::Jobber::Client::;
 
-use strict;
+use strict qw(subs vars);
 
 my %dir;
 my $dirid;
@@ -472,34 +473,44 @@ sub {
 
       my $try_open; $try_open = sub {
          aioreq_pri -2;
-         aio_open $dst, O_WRONLY | O_CREAT | O_EXCL, 0200, sub {
-            if (my $fh = $_[0]) {
-               aioreq_pri -2;
-               aio_move $src, $dst, sub {
-                  if ($_[0]) {
-                     close $fh;
-                     print "$src => $dst [ERROR $1]\n";
-                     aio_unlink $dst, sub {
-                        $job->finish;
-                     };
-                  } else {
-                     $job->event (unlink => $src);
-                     $job->event (create => $dst);
-                     aioreq_pri -2;
-                     aio_move xvpic $src, xvpic $dst, sub {
-                        # we do not care about the xvpic being copied correctly
-                        print "$src => $dst\n";
-                        $job->finish;
-                     };
-                  }
-               };
-            } elsif ($!{EEXIST}) {
+         aio_stat "$dst/.", sub {
+            if ($_[0] >= 0 || $! != Errno::ENOENT) {
                $dst = sprintf "%s-%03d", $basedst, $idx++;
-               $try_open->();
-            } else {
-               print "$src => $dst [ERROR $!]\n";
-               $job->finish;
+               return $try_open->();
             }
+
+            aioreq_pri -2;
+            aio_open $dst, O_WRONLY | O_CREAT | O_EXCL, 0200, sub {
+               if (my $fh = $_[0]) {
+                  undef $try_open;
+                  aioreq_pri -2;
+                  aio_move $src, $dst, sub {
+                     if ($_[0]) {
+                        close $fh;
+                        print "$src => $dst [ERROR $1]\n";
+                        aio_unlink $dst, sub {
+                           $job->finish;
+                        };
+                     } else {
+                        $job->event (unlink => $src);
+                        $job->event (create => $dst);
+                        aioreq_pri -2;
+                        aio_move xvpic $src, xvpic $dst, sub {
+                           # we do not care about the xvpic being copied correctly
+                           print "$src => $dst\n";
+                           $job->finish;
+                        };
+                     }
+                  };
+               } elsif ($! == Errno::EEXIST) {
+                  $dst = sprintf "%s-%03d", $basedst, $idx++;
+                  $try_open->();
+               } else {
+                  undef $try_open;
+                  print "$src => $dst [ERROR $!]\n";
+                  $job->finish;
+               }
+            };
          };
       };
 
@@ -934,8 +945,8 @@ sub emit_sel_changed {
       Gtk2::Selection->owner_set ($self->{sel_widget}, Gtk2::Gdk->SELECTION_PRIMARY, $time)
          if $time;
 
-      if (1 < scalar %$sel) {
-         $self->{info}->set_text (sprintf "%d entries selected", scalar %$sel);
+      if (1 < scalar keys %$sel) {
+         $self->{info}->set_text (sprintf "%d entries selected", scalar keys %$sel);
       } else {
          my $entry = $self->{entry}[(keys %$sel)[0]];
 
@@ -1788,19 +1799,18 @@ sub idle_check {
 
          } elsif ($entry->[2] & F_ISDIR) {
             aioreq_pri -1;
-            aio_stat "$path/.xvpics", sub {
+            aio_lstat $path, sub {
                return unless $generation == $self->{generation};
-
-               my $has_xvpics = -d _;
+               my $is_symlink = -l _;
 
                aioreq_pri -1;
-               aio_lstat $path, sub {
+               aio_stat "$path/.xvpics", sub { # hopefully this pulls in part of the dir
                   return unless $generation == $self->{generation};
+                  my $has_xvpics = -d _;
 
-                  my $is_symlink = -l _;
                   my $is_empty = 1;
 
-                  opendir my $fh, $path
+                  opendir my $fh, $path #d# no clue how to do this sensibly with IO::AIO
                      or return;
                      while (defined ($_ = readdir $fh)) {
                         next if $_ eq $updir;
@@ -2054,7 +2064,7 @@ sub chdir {
 
    $directory_visited{$dir}++;
 
-   opendir my $fh, $dir
+   -d $dir
       or die "$dir: $!";
 
    $self->realize;
@@ -2065,10 +2075,12 @@ sub chdir {
       $dir,
    );
 
-   $self->{dir} = $dir;
-   $self->chpaths ([map [$dir, $_], readdir $fh], 0, $cb);
+   aio_readdirx $dir, IO::AIO::READDIR_STAT_ORDER, sub {
+      $self->{dir} = $dir;
+      $self->chpaths ([map [$dir, $_], @{$_[0]}], 0, $cb);
 
-   $self->signal_emit (chdir => $dir);
+      $self->signal_emit (chdir => $dir);
+   };
 }
 
 =item $schnauzer->set_dir ($path[, $cb])

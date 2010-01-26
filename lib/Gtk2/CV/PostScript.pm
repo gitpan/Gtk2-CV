@@ -18,12 +18,13 @@ Gtk2::CV::PostScript - a class for writing postscript files
 
 package Gtk2::CV::PostScript;
 
+use common::sense;
 use Carp;
 
 my @papersize = map [
                        $_->[0],
                        $_->[1],
-                       __PACKAGE__->ps2mm (@_->[2,3]),
+                       __PACKAGE__->ps2mm (@_[2,3]),
                     ],
 (
    ["maximize", "Maximize", 0, 0],
@@ -195,7 +196,6 @@ EOF
       dump_binary $fh, $pb;
       print $fh "\n%%EndData\n";
    } else {
-      print $fh $operator;
       print $fh <<EOF;
 currentfile /ASCII85Decode filter
 false 3

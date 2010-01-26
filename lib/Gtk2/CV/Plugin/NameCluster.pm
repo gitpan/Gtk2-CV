@@ -1,5 +1,7 @@
 package Gtk2::CV::Plugin::NameCluster;
 
+use common::sense;
+
 use Glib::Object::Subclass
    'Gtk2::Window';
 
@@ -66,12 +68,6 @@ sub INIT_INSTANCE {
 
       %{$_[0]} = ()
    });
-}
-
-sub clusterize {
-   my ($self, $files, $regex) = @_;
-
-   \%cluster
 }
 
 sub analyse {

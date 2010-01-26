@@ -1,5 +1,6 @@
 package Gtk2::CV;
 
+use common::sense;
 use Gtk2;
 use Glib;
 
@@ -8,7 +9,7 @@ use IO::AIO;
 BEGIN {
    use XSLoader;
 
-   $VERSION = '1.54';
+   our $VERSION = '1.55';
 
    XSLoader::load "Gtk2::CV", $VERSION;
 }
