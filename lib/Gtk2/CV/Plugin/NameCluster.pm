@@ -82,10 +82,9 @@ sub analyse {
 
    my %files = map {
                       my $orig = $_;
-                      s/.*\///;
+                      s/^.*\///;
                       s/(?:-\d+|\.~[~0-9]*)+$//; # remove -000, .~1~ etc.
-                      s/\.[^\.]+$//g;
-                      s/\.[^.]*//;
+                      s/\.[^.]*$//;
                       ($orig => [/(\pL(?:\pL+|\pP(?=\pL))* | \pN+)/gx])
                    }
                    grep !/\.(sfv|crc|par|par2)$/i,
@@ -102,7 +101,7 @@ sub analyse {
    ) {
       my %c;
       while (my ($k, $v) = each %files) {
-         my $idx = 100000;
+         my $idx = "aaaaaa";
          # clusterise by component_idx . component
          push @{ $c{$idx++ . $_} }, $k
             for grep m/$regex/, @$v;
@@ -110,26 +109,26 @@ sub analyse {
 
       $cluster = { %c, %$cluster };
 
-      for (grep @{ $c{$_} } >= 3, keys %c) {
-         delete $files{$_} for @{ $c{$_} };
-      }
+      delete @files{ @{ $c{$_} } }
+         for grep @{ $c{$_} } >= 3, keys %c;
    }
 
    $progress->update (0.5);
    $progress->set_title ("categorize...");
 
-   $cluster->{"100000REMAINING FILES"} = [keys %files];
+   $cluster->{"000000REMAINING FILES"} = [keys %files];
 
    # remove component index
    my %clean;
    while (my ($k, $v) = each %$cluster) {
       if (exists $clean{substr $k, 6}) {
          my $idx = 0;
-         ++$idx while exists $clean{(substr $k, 6)."/$idx"};
+         ++$idx while exists $clean{(substr $k, 6) . "/$idx"};
          $k .= "/$idx";
       }
       $clean{substr $k, 6} = $v;
    }
+
    $self->{cluster} = \%clean;
 
    $progress->update (0.75);

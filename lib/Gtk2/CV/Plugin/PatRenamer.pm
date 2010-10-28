@@ -166,6 +166,11 @@ sub start {
 
          #TODO: everything is async, yes?
          unless (-e "$dir/$dst") {
+            # workaroudn for perl bug 77798
+            utf8::downgrade $dir;
+            utf8::downgrade $src;
+            utf8::downgrade $dst;
+
             print "$dir/$src => $dir/$dst\n";
             rename "$dir/$src", "$dir/$dst";
             rename "$dir/.xvpics/$src", "$dir/.xvpics/$dst";

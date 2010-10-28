@@ -1,13 +1,26 @@
-TODO/FIXME: .ogm support is a must
 TODO/FIXME: pixmap-bg-trick sometimes doesn't work (race?)
 TODO/FIXME: remove event does not recalculate schanuzer content size
 TODO: with manual placement, initial contents aren't displayed
-TODO: rename, mass-rename
 TODO: update a file that has been removed etc.
-TODO: cv file => rescan => 0 byte size if file no longer exists
+
+1.56 Thu Oct 28 14:13:36 CEST 2010
+	- try an ugly workaround against Gtk's CONTINUED brokenness
+          with regards to non-ascii filenames :(.
+	- REALLY hide paths that are in the process of being removed
+          from the Schnauzer.
+        - when selecting entries, stat them all and fine their total
+          size(s) + filesystem overhead after a delay.
+	- take advantage of the Guard module.
+        - work around mplayer grabbing the focus.
+        - improve mplayer window size bug workaround. *sigh*.
+        - try not to keep a handle to a guard file to avoid
+          running into rename races with nfs.
+        - work around perl bug #77798 in some parts.
+        - slight namecluster speed improvement.
+        - work around newer libmagic versions adding mime attributes.
 
 1.55 Tue Jan 26 03:18:45 CET 2010
-	- schnauzer did usually not give the corretc number for
+	- schnauzer did usually not give the correct number for
           "# entries selected".
 	- added new "renamer" plugin that is useful for mass renames
           of very similar filenames.

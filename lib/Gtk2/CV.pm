@@ -9,7 +9,7 @@ use IO::AIO;
 BEGIN {
    use XSLoader;
 
-   our $VERSION = '1.55';
+   our $VERSION = '1.56';
 
    XSLoader::load "Gtk2::CV", $VERSION;
 }

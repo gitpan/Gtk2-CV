@@ -42,6 +42,7 @@ WriteMakefile(
 	           },
     PREREQ_PM	=> {
                     common::sense	=> 2.03,
+                    Guard		=> 1.02,
 		    Glib		=> 1.08,
 		    Gtk2		=> 1.08,
 		    Gtk2::Ex::PodViewer	=> 0.17,

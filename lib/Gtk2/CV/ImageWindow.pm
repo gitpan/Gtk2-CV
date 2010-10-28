@@ -28,7 +28,9 @@ use List::Util qw(min max);
 use Scalar::Util;
 use POSIX ();
 use FileHandle ();
+use Errno ();
 use Fcntl ();
+use Socket ();
 
 my $title_image;
 
@@ -122,7 +124,7 @@ sub kill_player {
       if ($self->{mplayer_fh}) {
          local $SIG{PIPE} = 'IGNORE';
          print {$self->{mplayer_fh}} "quit\n";
-         close delete $self->{mplayer_fh};
+         delete $self->{mplayer_fh};
       } else {
          kill INT  => $self->{player_pid};
          kill TERM => $self->{player_pid};
@@ -280,6 +282,8 @@ sub load_image {
       $type = $exttypes{lc $1};
    }
 
+   $type =~ s/;.*//; # remove ; charset= etc.
+
    $@ = "generic file display error";
 
    if ($type eq "application/octet-stream" or $type =~ /^text\//) {
@@ -302,19 +306,25 @@ sub load_image {
       system "xpdf \Q$path\E &";
 
    } elsif ($type =~ /^image\//) {
-      $image = new_from_file Gtk2::Gdk::Pixbuf $path;
+      open my $fh, "<", $path
+         or die "$path: $!";
+      my $loader = new Gtk2::Gdk::PixbufLoader;
+      local $/; $loader->write (<$fh>);
+      $loader->close;
+      $image = $loader->get_pixbuf;
 
    } elsif ($type =~ /^(audio\/|application\/ogg$)/) {
       if (1 || exists $ENV{CV_AUDIO_PLAYER}) {
          $self->{player_pid} = fork;
 
          if ($self->{player_pid} == 0) {
-            open STDIN , "</dev/null";
-            open STDOUT, ">/dev/null";
-            open STDERR, ">&2";
+#            open STDIN , "</dev/null";
+#            open STDOUT, ">/dev/null";
+#            open STDERR, ">&2";
 
             my $player = $ENV{CV_AUDIO_PLAYER} || "play";
-            exec "$player -- \Q$path";
+            $path = "./$path" if $path =~ /^-/;
+            exec "$player \Q$path";
             POSIX::_exit 0;
          }
       } else {
@@ -325,7 +335,7 @@ sub load_image {
       $path = "./$path" if $path =~ /^-/;
 
       # try video
-      my $mplayer = qx{LC_ALL=C exec mplayer </dev/null 2>/dev/null -sub /dev/null -sub-fuzziness 0 -nolirc -cache-min 0 -noconsolecontrols -identify -vo null -ao null -frames 0 \Q$path};
+      my $mplayer = qx{LC_ALL=C exec mplayer </dev/null 2>/dev/null -sub /dev/null -sub-fuzziness 0 -cache-min 0 -input nodefault-bindings:conf=/dev/null -identify -vo null -ao null -frames 0 \Q$path};
 
       my $w = $mplayer =~ /^ID_VIDEO_WIDTH=(\d+)$/sm ? $1 : undef;
       my $h = $mplayer =~ /^ID_VIDEO_HEIGHT=(\d+)$/sm ? $1 : undef;
@@ -352,39 +362,62 @@ sub load_image {
          $box->set_above_child (1);
          $box->set_visible_window (0);
          $box->set_events ([]);
+         $box->can_focus (0);
 
          my $window = new Gtk2::DrawingArea;
          $box->add ($window);
-         # some extra flickering to force configure events to mplayer
-         $window->signal_connect (event => sub {
-            $self->update_mplayer_window
-               if $_[1]->type =~ /^(?:map|property-notify)$/;
-
-            0
-         });
          $self->add ($box);
          $box->show_all;
          $window->realize;
+
          $self->{mplayer_window} = $window;
 
          my $xid = $window->window->get_xid;
 
-         pipe my $rfh, $self->{mplayer_fh};
-         $self->{mplayer_fh}->autoflush (1);
-         fcntl $self->{mplayer_fh}, &Fcntl::F_SETFD, &Fcntl::FD_CLOEXEC;
+         socketpair my $sfh, my $mfh, Socket::AF_UNIX (), Socket::SOCK_STREAM (), 0;
+         $self->{mplayer_fh} = $mfh;
+         $mfh->autoflush (1);
+         fcntl $mfh, Fcntl::F_SETFD (), Fcntl::FD_CLOEXEC ();
+         fcntl $mfh, Fcntl::F_SETFL (), Fcntl::O_NONBLOCK ();
 
          $self->{player_pid} = fork;
 
          if ($self->{player_pid} == 0) {
-            open STDIN, "<&" . fileno $rfh;
-            open STDOUT, ">/dev/null";
+            $ENV{LC_ALL} = "C";
+
+            open STDIN, "<&" . fileno $sfh;
+            open STDOUT, ">&" . fileno $sfh;
+            #open STDOUT, ">/dev/null";
             open STDERR, ">/dev/null";
-            exec "mplayer", qw(-slave -nofs -nokeepaspect -noconsolecontrols -nomouseinput -zoom -fixed-vo -loop 0),
+
+            exec "mplayer", qw(-slave -nofs -nokeepaspect -input nodefault-bindings:conf=/dev/null -zoom -fixed-vo -quiet -loop 0),
                             -wid => $xid, $path;
             POSIX::_exit 0;
          }
 
-         close $rfh;
+         close $sfh;
+
+         print $mfh "get_file_name\n";
+
+         my $input;
+         add_watch Glib::IO fileno $mfh, in => sub {
+            my $len = sysread $mfh, $input, 128, length $input;
+
+            if ($len > 0) {
+               while ($input =~ s/^(.*)\n//) {
+                  my $line = $1;
+
+                  if ($line =~ /ANS_FILENAME=/) {
+                     # presumably, everything is set-up now
+                     $self->update_mplayer_window;
+                  }
+               }
+            } elsif (defined $len or $! != Errno::EAGAIN) {
+               return 0;
+            }
+
+            1
+         };
       } else {
          $@ = "mplayer doesn't recognize this '$type' file";
          # probably audio, or a real error

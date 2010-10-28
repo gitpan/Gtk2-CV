@@ -153,6 +153,7 @@ my %ext_logo = (
    mp4  => "mpeg",
    
    ogm  => "ogm",
+   mkv  => "ogm", # sigh
 
    mov  => "mov",
    qt   => "mov",
@@ -350,7 +351,18 @@ sub {
       mkdir +(dirname $path) . "/.xvpics", 0777;
 
       my $pb = eval { $path =~ /\.jpe?g$/i && Gtk2::CV::load_jpeg $path, 1 }
-               || eval { new_from_file_at_scale Gtk2::Gdk::Pixbuf $path, IW, IH, 1 }
+               || eval {
+                     # pixbuf only supports utf-8 filenames so do I/O ourselves. sigh.
+                     open my $fh, "<", $path
+                        or die "$path: $!";
+                     my $loader = new Gtk2::Gdk::PixbufLoader;
+                     #$loader->set_size (IW, IH);
+                     # should set size-prepared callback to scale down, but
+                     # we only really care about this for jpegs, which are handled above.
+                     local $/; $loader->write (<$fh>);
+                     $loader->close;
+                     $loader->get_pixbuf
+                  }
                || eval { video_thumbnail $path }
                || Gtk2::CV::require_image "error.png";
 
@@ -482,11 +494,12 @@ sub {
             aioreq_pri -2;
             aio_open $dst, O_WRONLY | O_CREAT | O_EXCL, 0200, sub {
                if (my $fh = $_[0]) {
+                  close $_[0];
+
                   undef $try_open;
                   aioreq_pri -2;
                   aio_move $src, $dst, sub {
                      if ($_[0]) {
-                        close $fh;
                         print "$src => $dst [ERROR $1]\n";
                         aio_unlink $dst, sub {
                            $job->finish;
@@ -497,7 +510,7 @@ sub {
                         aioreq_pri -2;
                         aio_move xvpic $src, xvpic $dst, sub {
                            # we do not care about the xvpic being copied correctly
-                           print "$src => $dst\n";
+                           print "$src to $dst\n";
                            $job->finish;
                         };
                      }
@@ -929,10 +942,22 @@ sub set_geometry_hints {
    $window->set_geometry_hints ($self->{draw}, $hints, [qw(base-size resize-inc)]);
 }
 
+sub finish_info_update {
+   my ($self) = @_;
+
+   delete $self->{info_text};
+   (delete $self->{info_updater_group})->cancel
+      if exists $self->{info_updater_group};
+   remove Glib::Source delete $self->{info_updater}
+      if exists $self->{info_updater};
+}
+
 sub emit_sel_changed {
    my ($self, $time) = @_;
 
    $time ||= Gtk2->get_current_event_time;
+
+   $self->finish_info_update;
 
    my $sel = $self->{sel};
 
@@ -946,7 +971,42 @@ sub emit_sel_changed {
          if $time;
 
       if (1 < scalar keys %$sel) {
-         $self->{info}->set_text (sprintf "%d entries selected", scalar keys %$sel);
+         $self->{info_text} = sprintf "%d entries selected", scalar keys %$sel;
+         $self->{info}->set_text ("$self->{info_text} (...)");
+
+         # start stat'ing all entries after a second
+         $self->{info_updater} = add Glib::Timeout 300, sub {
+            my $todo = [values %{ $self->{sel} }];
+            $self->{info_size} = 0;
+            $self->{info_disk} = 0;
+
+            $self->{info_updater} = add Glib::Timeout 300, sub {
+               no integer;
+               $self->{info}->set_text (sprintf "%s (%.6g+%.3gMB, %d entries to stat)", $self->{info_text},
+                                                $self->{info_size} / 1e6, $self->{info_disk} / 1e6, scalar @$todo);
+
+               1
+            };
+
+            $self->{info_updater_group} = aio_group sub {
+               no integer;
+               $self->{info}->set_text (sprintf "%s (%.6g+%.3gMB)", $self->{info_text},
+                                                $self->{info_size} / 1e6, $self->{info_disk} / 1e6);
+               $self->finish_info_update;
+            };
+            $self->{info_updater_group}->feed (sub {
+               my $entry = pop @$todo
+                  or return;
+
+               $_[0]->add (aio_stat "$entry->[0]/$entry->[1]", sub {
+                  my ($size, $blocks) = (stat _)[7, 12];
+                  $self->{info_size} += $size;
+                  $self->{info_disk} += $blocks * 512 - $size;
+               });
+            });
+
+            0
+         };
       } else {
          my $entry = $self->{entry}[(keys %$sel)[0]];
 
@@ -1520,16 +1580,11 @@ sub entry_changed {
    my ($self) = @_;
 
    # remove entries for which a job exists that will eventually delete it (hide attr)
-   # unfortunately, this skips in-progress jobs. bah, as we get the jobber_update
-   # before the job finishes.
    {
       my %delete;
 
-      for (grep exists $Gtk2::CV::Jobber::jobs{"$_->[0]/$_->[1]"}, @{ $self->{entry} }) {
-         for my $type (keys %{ $Gtk2::CV::Jobber::jobs{"$_->[0]/$_->[1]"} }) {
-            undef $delete{$_} if $Gtk2::CV::Jobber::type{$type}{hide};
-         }
-      }
+      @delete{ grep exists $Gtk2::CV::Jobber::hide{"$_->[0]/$_->[1]"}, @{ $self->{entry} } }
+         = ();
 
       # a rare event
       $self->{entry} = [grep !exists $delete{$_}, @{ $self->{entry} }]

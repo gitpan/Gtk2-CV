@@ -20,6 +20,7 @@ use POSIX ();
 use Scalar::Util ();
 use IO::AIO;
 use Fcntl ();
+use Guard ();
 
 use Gtk2::CV::Progress;
 
@@ -31,10 +32,12 @@ Global variable containing all jobs, indexed by full path.
 
 our %jobs;
 our @jobs; # global job order
+our %hide; # which paths to hide
 
 our %type;
 our @type; # type order
 
+my %type_hide;
 my $disabled;
 
 my $MAXFORK = int 1 + 1.5 * do {
@@ -140,6 +143,7 @@ sub define($@) {
    $opt{class}   ||= "other";
 
    $type{$type} = \%opt;
+   undef $type_hide{$type} if $opt{hide};
 
    @type = sort { $type{$b}{pri} <=> $type{$a}{pri} } keys %type;
 }
@@ -161,6 +165,8 @@ sub submit {
    }
 
    $jobs{$path}{$type} = { data => $data };
+
+   undef $hide{$path} if exists $type_hide{$type};
 
    scheduler;
 }
@@ -199,11 +205,7 @@ sub inhibit(&) {
 sub inhibit_guard {
    disable;
 
-   bless { }, Gtk2::CV::Jobber::Inhibit::;
-}
-
-sub Gtk2::CV::Jobber::Inhibit::DESTROY {
-   enable;
+   Guard::guard (\&enable)
 }
 
 =back
@@ -304,8 +306,9 @@ sub Gtk2::CV::Jobber::Job::finish {
       $slave->finish ($job);
    } else {
       unless (delete $job->{event}) {
-         my $class = $type{$job->{type}}{class};
-         ++$class_limit{$class};
+         my $type = $type{$job->{type}};
+         ++$class_limit{$type->{class}};
+         delete $hide{$job->{path}} if $type->{hide};
 
          scheduler;
       }
